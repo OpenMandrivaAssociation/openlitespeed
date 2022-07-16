@@ -29,6 +29,8 @@ BuildRequires: pkgconfig(yajl)
 BuildRequires: pkgconfig(luajit)
 BuildRequires: pkgconfig(libzmq)
 BuildRequires: pkgconfig(libmaxminddb)
+BuildRequires: pkgconfig(lmdb)
+BuildRequires: openldap-devel
 # Just to make install.sh happy
 BuildRequires: php-openlitespeed
 # Just so the internal boringssl fork will build

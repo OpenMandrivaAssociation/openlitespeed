@@ -40,7 +40,7 @@ diff -up openlitespeed-1.7.16/third-party/script/build_all.sh.4~ openlitespeed-1
 @@ -1,5 +1,5 @@
  #!/bin/sh
 -BUILD_LIBS="brotli zlib bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb openldap flatbuffers libinjection zmq curl libxml2 libmodsec netmap"
-+BUILD_LIBS="bssl bcrypt geoip ip2loc psol udns unittest-cpp lmdb openldap flatbuffers libinjection curl libmodsec netmap"
++BUILD_LIBS="bssl bcrypt geoip ip2loc psol udns unittest-cpp flatbuffers libinjection curl libmodsec netmap"
  
  cd `dirname "$0"`
  cd ..
@@ -61,7 +61,7 @@ diff -up openlitespeed-1.7.16/third-party/script/build_lslb.sh.4~ openlitespeed-
 @@ -1,5 +1,5 @@
  #!/bin/sh
 -BUILD_LIBS="brotli zlib bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb openldap libinjection flatbuffers zmq "
-+BUILD_LIBS="bssl bcrypt geoip ip2loc psol udns unittest-cpp lmdb openldap libinjection flatbuffers "
++BUILD_LIBS="bssl bcrypt geoip ip2loc psol udns unittest-cpp libinjection flatbuffers "
  
  cd `dirname "$0"`
  cd ..
@@ -71,7 +71,7 @@ diff -up openlitespeed-1.7.16/third-party/script/build_ols.sh.4~ openlitespeed-1
 @@ -1,5 +1,5 @@
  #!/bin/sh
 -BUILD_LIBS="brotli zlib bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb curl libxml2 yajl libmodsec"
-+BUILD_LIBS="bssl bcrypt geoip ip2loc psol udns unittest-cpp lmdb curl libmodsec"
++BUILD_LIBS="bssl bcrypt geoip ip2loc psol udns unittest-cpp curl libmodsec"
  
  cd `dirname "$0"`
  cd ..
