@@ -1,10 +1,13 @@
 %global _debugsource_template %{nil}
+# Currently there are mixed compilers at work...
+%define _disable_lto 1
+%global optflags %{optflags} -fPIC -fno-lto
 
 Name: openlitespeed
 Version: 1.7.16
 Release: 1
 Source0: https://openlitespeed.org/packages/openlitespeed-%{version}.src.tgz
-Source1: third-party-20220808.tar.xz
+Source1: third-party-20220909.tar.xz
 # [Not used, generates Source1]
 Source101: package-thirdparty.sh
 Patch0: openlitespeed-1.7.16-openmandriva.patch
@@ -12,6 +15,7 @@ Patch1: openlitespeed-1.7.16-yajl-sources-have-moved.patch
 Patch2: openlitespeed-1.7.16-fix-build-with-preexisting-third-party.patch
 Patch3: openlitespeed-1.7.16-system-libs.patch
 Patch4: openlitespeed-1.7.16-no-prebuilt-php.patch
+Patch5: openlitespeed-1.7.16-udns-fPIC.patch
 Summary: High performance, lightweight web server
 URL: https://openlitespeed.org/
 License: GPLv3
@@ -49,6 +53,8 @@ mv third-party ..
 # actually hardcoded in a number of places. Let's replace them
 # globally with sed so we don't miss any new hardcodes on updates...
 find . -type f |xargs sed -i -e 's,/tmp/lshttpd,/run/lshttpd,g;s,/usr/local/lsws,/opt/openlitespeed,g'
+
+sed -i -e "s|^CFLAGS =.*|CFLAGS = %{optflags} -fPIC|" ../third-party/src/libbcrypt/crypt_blowfish/Makefile
 
 %build
 ./build.sh

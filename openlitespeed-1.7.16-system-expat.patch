@@ -1,0 +1,30 @@
+diff -up openlitespeed-1.7.16/third-party/script/build_all.sh.4~ openlitespeed-1.7.16/third-party/script/build_all.sh
+--- openlitespeed-1.7.16/third-party/script/build_all.sh.4~	2022-07-16 02:55:17.000000000 +0200
++++ openlitespeed-1.7.16/third-party/script/build_all.sh	2022-07-16 05:45:24.070860283 +0200
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-BUILD_LIBS="brotli bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb openldap flatbuffers libinjection zmq curl libxml2 libmodsec netmap"
++BUILD_LIBS="bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb openldap flatbuffers libinjection zmq curl libxml2 libmodsec netmap"
+ 
+ cd `dirname "$0"`
+ cd ..
+diff -up openlitespeed-1.7.16/third-party/script/build_lslb.sh.4~ openlitespeed-1.7.16/third-party/script/build_lslb.sh
+--- openlitespeed-1.7.16/third-party/script/build_lslb.sh.4~	2022-07-16 02:55:17.000000000 +0200
++++ openlitespeed-1.7.16/third-party/script/build_lslb.sh	2022-07-16 05:45:24.070860283 +0200
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-BUILD_LIBS="brotli bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb openldap libinjection flatbuffers zmq "
++BUILD_LIBS="bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb openldap libinjection flatbuffers zmq "
+ 
+ cd `dirname "$0"`
+ cd ..
+diff -up openlitespeed-1.7.16/third-party/script/build_ols.sh.4~ openlitespeed-1.7.16/third-party/script/build_ols.sh
+--- openlitespeed-1.7.16/third-party/script/build_ols.sh.4~	2022-07-16 05:45:24.070860283 +0200
++++ openlitespeed-1.7.16/third-party/script/build_ols.sh	2022-07-16 05:46:48.956115864 +0200
+@@ -1,5 +1,5 @@
+ #!/bin/sh
+-BUILD_LIBS="brotli bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb curl libxml2 yajl libmodsec"
++BUILD_LIBS="bssl bcrypt expat geoip ip2loc libmaxminddb luajit pcre psol udns unittest-cpp lmdb curl libxml2 yajl libmodsec"
+ 
+ cd `dirname "$0"`
+ cd ..

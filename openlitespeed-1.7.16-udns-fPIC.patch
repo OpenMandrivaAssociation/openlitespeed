@@ -1,0 +1,12 @@
+diff -up a/third-party/script/build_udns.sh.omv~ b/third-party/script/build_udns.sh
+--- a/third-party/script/build_udns.sh.omv~	2022-09-09 12:42:01.218781566 +0200
++++ b/third-party/script/build_udns.sh	2022-09-09 12:42:26.552412023 +0200
+@@ -7,7 +7,7 @@ cd src
+ 
+ cd udns
+ make clean
+-CFLAGS="-g -Wall -W -O2" ./configure
++CFLAGS="-g -Wall -W -O2 ${RPM_OPT_FLAGS} -fPIC" ./configure
+ make
+ cp udns.h ../../include
+ cp libudns.a ../../lib
