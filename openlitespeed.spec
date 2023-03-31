@@ -5,7 +5,7 @@
 
 Name: openlitespeed
 Version: 1.7.16
-Release: 1
+Release: 2
 Source0: https://openlitespeed.org/packages/openlitespeed-%{version}.src.tgz
 Source1: third-party-20220909.tar.xz
 # [Not used, generates Source1]
