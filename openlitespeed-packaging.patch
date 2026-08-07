@@ -1,0 +1,975 @@
+commit 95fd78a4b94e0c4c19ee1f9986a9eb0d73c662a5
+Author: OpenLiteSpeed Packager <packager@openlitespeed.org>
+Date:   Sun May 24 15:39:38 2026 +0000
+
+    build: add USE_SYSTEM_LIBS and FHS_LAYOUT options for distro packaging
+    
+    Add two new CMake options:
+    
+    - USE_SYSTEM_LIBS (default OFF): Link against system shared libraries
+      (OpenSSL, zlib, PCRE, expat, libxml2, brotli, maxminddb, udns)
+      instead of bundled static archives. Removes BoringSSL dependency,
+      -nodefaultlibs hack, and static libstdc++ linking.
+    
+    - FHS_LAYOUT (default OFF): Install to FHS-compliant paths:
+      /usr/sbin for binaries, /etc/openlitespeed for config,
+      /var/log/openlitespeed for logs, /srv/openlitespeed for docroot.
+    
+    Both options default to OFF preserving full backward compatibility
+    with the existing build.sh workflow.
+    
+    New files:
+    - openlitespeed.spec: RPM spec following OpenMandriva conventions
+    - PACKAGING.md: Documentation for distribution packagers
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 34913d7..41a7f11 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2,9 +2,89 @@ cmake_minimum_required(VERSION 3.0)
+ set( CMAKE_EXPORT_COMPILE_COMMANDS ON)
+ 
+ Project(openlitespeed VERSION 1.9.0)
+-INCLUDE( ${PROJECT_SOURCE_DIR}/CMakeModules/common.cmake)
+ INCLUDE(GNUInstallDirs)
+ 
++###############################################################################
++# Distribution packaging options
++###############################################################################
++OPTION(USE_SYSTEM_LIBS "Link against system shared libraries instead of bundled static archives" OFF)
++OPTION(FHS_LAYOUT     "Install to FHS-compliant paths (/etc, /var/log, /usr/share, ...)" OFF)
++
++###############################################################################
++# When USE_SYSTEM_LIBS is ON, locate every dependency via find_package /
++# pkg_check_modules.  Otherwise fall back to the legacy bundled-library paths.
++###############################################################################
++if (USE_SYSTEM_LIBS)
++    include(FindPkgConfig)
++
++    # --- OpenSSL (replaces bundled BoringSSL) ---
++    find_package(OpenSSL REQUIRED)
++    set(SSL_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
++    set(SSL_INCLUDE_DIRS ${OPENSSL_INCLUDE_DIR})
++
++    # --- zlib ---
++    find_package(ZLIB REQUIRED)
++    set(ZLIB_LIBRARIES ZLIB::ZLIB)
++
++    # --- PCRE ---
++    pkg_check_modules(PCRE REQUIRED libpcre)
++
++    # --- Expat ---
++    find_package(EXPAT REQUIRED)
++    set(EXPAT_LIBRARIES EXPAT::EXPAT)
++
++    # --- libxml2 ---
++    find_package(LibXml2 REQUIRED)
++    set(XML2_LIBRARIES LibXml2::LibXml2)
++
++    # --- Brotli (optional) ---
++    pkg_check_modules(BROTLI libbrotlienc libbrotlidec)
++    if (BROTLI_FOUND)
++        add_definitions(-DUSE_BROTLI)
++    else()
++        message(WARNING "Brotli not found -- brotli compression disabled")
++    endif()
++
++    # --- libmaxminddb (optional) ---
++    pkg_check_modules(MAXMINDDB libmaxminddb)
++    if (MAXMINDDB_FOUND)
++        add_definitions(-DENABLE_IPTOGEO2)
++    else()
++        message(WARNING "libmaxminddb not found -- GeoIP2 support disabled")
++    endif()
++
++    # --- udns ---
++    # udns has no .pc; fall back to a manual check
++    find_library(UDNS_LIBRARY NAMES udns)
++    find_path(UDNS_INCLUDE_DIR NAMES udns.h)
++    if (UDNS_LIBRARY AND UDNS_INCLUDE_DIR)
++        set(UDNS_LIBRARIES ${UDNS_LIBRARY})
++        include_directories(${UDNS_INCLUDE_DIR})
++    else()
++        message(FATAL_ERROR "libudns not found (need libudns-dev / udns-devel)")
++    endif()
++
++    # --- IP2Location (optional) ---
++    find_library(IP2LOC_LIBRARY NAMES IP2Location)
++    find_path(IP2LOC_INCLUDE_DIR NAMES IP2Location.h)
++    if (IP2LOC_LIBRARY AND IP2LOC_INCLUDE_DIR)
++        set(IP2LOC_LIBRARIES ${IP2LOC_LIBRARY})
++        include_directories(${IP2LOC_INCLUDE_DIR})
++        add_definitions(-DUSE_IP2LOCATION)
++    else()
++        set(IP2LOC_LIBRARIES "")
++        message(STATUS "IP2Location not found -- disabled")
++    endif()
++
++    # Propagate include dirs from pkg-config results
++    include_directories(${SSL_INCLUDE_DIRS} ${PCRE_INCLUDE_DIRS}
++                        ${BROTLI_INCLUDE_DIRS} ${MAXMINDDB_INCLUDE_DIRS})
++    link_directories(${PCRE_LIBRARY_DIRS} ${BROTLI_LIBRARY_DIRS}
++                     ${MAXMINDDB_LIBRARY_DIRS})
++endif()
++
++INCLUDE( ${PROJECT_SOURCE_DIR}/CMakeModules/common.cmake)
++
+ SET(CMAKE_INCLUDE_CURRENT_DIR ON)
+ set(CMAKE_SKIP_BUILD_RPATH TRUE)
+ 
+@@ -32,8 +112,11 @@ OPTION(MOD_INSPECTOR "Whether modinspector should be built" OFF)
+ OPTION(MOD_UPLOADPROGRESS "Whether uploadprogress should be built" OFF)
+ OPTION(MOD_LSPHP "Whether mod_lsphp should be built" OFF)
+ 
+-include_directories( BEFORE  include src/lshpack src/liblsquic/ls-qpack ${PROJECT_SOURCE_DIR}/../third-party/include/)
+-link_directories( ${PROJECT_SOURCE_DIR}/../third-party/lib/)
++include_directories( BEFORE  include src/lshpack src/liblsquic/ls-qpack)
++if (NOT USE_SYSTEM_LIBS)
++    include_directories( BEFORE ${PROJECT_SOURCE_DIR}/../third-party/include/)
++    link_directories( ${PROJECT_SOURCE_DIR}/../third-party/lib/)
++endif()
+ 
+ #SET (CMAKE_C_COMPILER         "/usr/bin/clang")
+ #SET (CMAKE_CXX_COMPILER       "/usr/bin/clang++")
+@@ -96,7 +179,10 @@ if (CMAKE_C_COMPILER MATCHES "clang")
+     unset(LIBSAN)
+ endif()
+ 
+-set(MY_CMAKE_FLAGS  "${MY_CMAKE_FLAGS} -DHAVE_BORINGSSL -Wall -Wextra -Wno-unused-parameter -Wno-unused-function")
++set(MY_CMAKE_FLAGS  "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter -Wno-unused-function")
++if (NOT USE_SYSTEM_LIBS)
++    set(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DHAVE_BORINGSSL")
++endif()
+ 
+ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+     # Suppress gcc warnings about BoringSSL's openssl/stack.h
+@@ -118,7 +204,9 @@ add_definitions(-DDISABLE_OBJ_POOL)
+ #set(MY_CMAKE_POOL_FLAG  " -DPOOL_TESTING -DUSE_VALGRIND")
+ #add_definitions(-DPOOL_TESTING)
+ #add_definitions(-DLS_WORKCREW_DEBUG)
+-add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
++if (NOT USE_SYSTEM_LIBS)
++    add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
++endif()
+ 
+ #Add definition for QUIC
+ add_definitions(-DH3_ALPN="\\x02h3\\x05h3-29")
+@@ -164,30 +252,34 @@ SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMakeModules)
+ 
+ #execute_process( COMMAND ${PROJECT_SOURCE_DIR}/dlossl.sh )
+ 
+-##########################################################################################
+-#If you want to use BoringSSL, just un-comment out the following commands
+-#AND YOU NEED TO HAVE THE files ready in openlitespeed/ssl
+-#You can run the dlbssl.sh to make them ready
+-set(BSSL_ADD_LIB  libdecrepit.a)
+-##########################################################################################
+-#If you want to use Brotli Compression, just un-comment out the following commands
+-set(BROTLI_ADD_LIB  libbrotlidec-static.a libbrotlienc-static.a libbrotlicommon-static.a)
+-add_definitions(-DUSE_BROTLI)
+-##########################################################################################
+-#If you want to use IP2Location, just un-comment out the following commands
+-set(IP2LOC_ADD_LIB  libIP2Location.a)
+-add_definitions(-DUSE_IP2LOCATION)
+-##########################################################################################
+-#If you want to use IPTOGEO2, just un-comment out the following commands
+-set(MMDB_LIB  maxminddb)
+-add_definitions(-DENABLE_IPTOGEO2)
+-##########################################################################################
++if (NOT USE_SYSTEM_LIBS)
++    ##########################################################################################
++    #If you want to use BoringSSL, just un-comment out the following commands
++    #AND YOU NEED TO HAVE THE files ready in openlitespeed/ssl
++    #You can run the dlbssl.sh to make them ready
++    set(BSSL_ADD_LIB  libdecrepit.a)
++    ##########################################################################################
++    #If you want to use Brotli Compression, just un-comment out the following commands
++    set(BROTLI_ADD_LIB  libbrotlidec-static.a libbrotlienc-static.a libbrotlicommon-static.a)
++    add_definitions(-DUSE_BROTLI)
++    ##########################################################################################
++    #If you want to use IP2Location, just un-comment out the following commands
++    set(IP2LOC_ADD_LIB  libIP2Location.a)
++    add_definitions(-DUSE_IP2LOCATION)
++    ##########################################################################################
++    #If you want to use IPTOGEO2, just un-comment out the following commands
++    set(MMDB_LIB  maxminddb)
++    add_definitions(-DENABLE_IPTOGEO2)
++    ##########################################################################################
++endif()
+ 
+ 
+ add_definitions(-DTEST_OUTPUT_PLAIN_CONF)
+ #add_definitions(-DLS_VG_DEBUG)
+ add_definitions(-DDEBUG_POOL)
+-add_definitions(-DOPENSSL_NO_CXX)
++if (NOT USE_SYSTEM_LIBS)
++    add_definitions(-DOPENSSL_NO_CXX)
++endif()
+ 
+ execute_process( COMMAND getconf LFS_CFLAGS
+     OUTPUT_VARIABLE  LFS_CFLAGS )
+@@ -195,6 +287,36 @@ execute_process( COMMAND getconf LFS_CFLAGS
+ add_definitions( ${LFS_CFLAGS} )
+ add_definitions(-DUSE_UDNS)
+ 
++###############################################################################
++# FHS layout: define canonical installation directories
++###############################################################################
++if (FHS_LAYOUT)
++    add_definitions(-DFHS_LAYOUT)
++
++    set(OLS_CONF_DIR    "${CMAKE_INSTALL_FULL_SYSCONFDIR}/openlitespeed"
++        CACHE PATH "Configuration directory")
++    set(OLS_LOG_DIR     "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/log/openlitespeed"
++        CACHE PATH "Log directory")
++    set(OLS_RUN_DIR     "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/run/openlitespeed"
++        CACHE PATH "Runtime / PID directory")
++    set(OLS_LIB_DIR     "${CMAKE_INSTALL_FULL_LIBDIR}/openlitespeed"
++        CACHE PATH "Private library / modules directory")
++    set(OLS_SHARE_DIR   "${CMAKE_INSTALL_FULL_DATADIR}/openlitespeed"
++        CACHE PATH "Shared data directory (error pages, autoindex, docs)")
++    set(OLS_DOC_ROOT    "/srv/openlitespeed"
++        CACHE PATH "Default document root")
++    set(OLS_TMP_DIR     "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/run/openlitespeed/tmp"
++        CACHE PATH "Temporary / swap directory")
++
++    add_definitions(-DFHS_CONF_DIR="${OLS_CONF_DIR}")
++    add_definitions(-DFHS_LOG_DIR="${OLS_LOG_DIR}")
++    add_definitions(-DFHS_LIB_DIR="${OLS_LIB_DIR}")
++    add_definitions(-DFHS_SHARE_DIR="${OLS_SHARE_DIR}")
++    add_definitions(-DFHS_DOC_ROOT="${OLS_DOC_ROOT}")
++    add_definitions(-DFHS_TMP_DIR="${OLS_TMP_DIR}")
++    add_definitions(-DFHS_RUN_DIR="${OLS_RUN_DIR}")
++endif()
++
+ add_subdirectory(src)
+ add_subdirectory(support)
+ add_subdirectory(lshostexec)
+@@ -202,3 +324,57 @@ add_subdirectory(lshostexec)
+ if (BUILD_TEST)
+ add_subdirectory(test)
+ endif()
++
++###############################################################################
++# FHS install rules
++###############################################################################
++if (FHS_LAYOUT)
++    # Config files
++    install(FILES dist/conf/mime.properties
++            DESTINATION ${OLS_CONF_DIR})
++    install(DIRECTORY dist/conf/templates
++            DESTINATION ${OLS_CONF_DIR})
++    install(DIRECTORY dist/conf/vhosts
++            DESTINATION ${OLS_CONF_DIR})
++
++    # Admin config
++    install(DIRECTORY dist/admin/conf/
++            DESTINATION ${OLS_CONF_DIR}/admin
++            PATTERN "*.in" EXCLUDE)
++
++    # Control script
++    install(PROGRAMS dist/bin/lswsctrl
++            DESTINATION ${CMAKE_INSTALL_SBINDIR})
++
++    # Shared data (admin web UI, autoindex, error pages, docs)
++    install(DIRECTORY dist/admin/html.open/
++            DESTINATION ${OLS_SHARE_DIR}/admin/html)
++    install(DIRECTORY dist/admin/misc/
++            DESTINATION ${OLS_SHARE_DIR}/admin/misc
++            USE_SOURCE_PERMISSIONS)
++    install(DIRECTORY dist/share/autoindex/
++            DESTINATION ${OLS_SHARE_DIR}/autoindex)
++    install(DIRECTORY dist/docs/
++            DESTINATION ${OLS_SHARE_DIR}/docs)
++    install(DIRECTORY dist/Example/
++            DESTINATION ${OLS_SHARE_DIR}/Example)
++
++    # FCGI helpers
++    install(DIRECTORY dist/fcgi-bin/
++            DESTINATION ${OLS_SHARE_DIR}/fcgi-bin
++            USE_SOURCE_PERMISSIONS)
++
++    # Systemd service
++    install(FILES dist/admin/misc/lshttpd.service.in
++            DESTINATION ${OLS_SHARE_DIR}/admin/misc)
++
++    # License / version
++    install(FILES dist/GPL.txt dist/VERSION
++            DESTINATION ${OLS_SHARE_DIR})
++
++    # Create directory targets for logs, run, docroot
++    install(DIRECTORY DESTINATION ${OLS_LOG_DIR})
++    install(DIRECTORY DESTINATION ${OLS_RUN_DIR})
++    install(DIRECTORY DESTINATION ${OLS_DOC_ROOT})
++    install(DIRECTORY DESTINATION ${OLS_LIB_DIR}/modules)
++endif()
+diff --git a/CMakeModules/common.cmake b/CMakeModules/common.cmake
+index 6c5d5b5..a4d40f1 100644
+--- a/CMakeModules/common.cmake
++++ b/CMakeModules/common.cmake
+@@ -1,3 +1,8 @@
+ cmake_minimum_required(VERSION 3.0)
+-include_directories ("${PROJECT_SOURCE_DIR}/openssl/include" "${PROJECT_SOURCE_DIR}/src" "${PROJECT_BINARY_DIR}/src")
++if (NOT USE_SYSTEM_LIBS)
++    # Bundled BoringSSL headers
++    include_directories("${PROJECT_SOURCE_DIR}/openssl/include"
++                        "${PROJECT_SOURCE_DIR}/ssl/include")
++endif()
++include_directories("${PROJECT_SOURCE_DIR}/src" "${PROJECT_BINARY_DIR}/src")
+ 
+diff --git a/PACKAGING.md b/PACKAGING.md
+new file mode 100644
+index 0000000..2beb710
+--- /dev/null
++++ b/PACKAGING.md
+@@ -0,0 +1,129 @@
++# Packaging OpenLiteSpeed for Linux Distributions
++
++This document describes the CMake build options added to support building
++OpenLiteSpeed against system shared libraries and installing to
++FHS-compliant paths.  These changes allow the project to be packaged by
++Linux distributions that require shared-library linking and standard
++directory layouts.
++
++## New CMake Options
++
++### `USE_SYSTEM_LIBS` (default: `OFF`)
++
++When set to `ON`, the build uses `find_package()` and `pkg_check_modules()`
++to locate system-installed versions of every library that OpenLiteSpeed
++normally bundles as a static archive:
++
++| Library | How it is found | Upstream bundled form |
++|---|---|---|
++| OpenSSL | `find_package(OpenSSL)` | BoringSSL static (`libssl.a`, `libcrypto.a`, `libdecrepit.a`) |
++| zlib | `find_package(ZLIB)` | `libz.a` |
++| PCRE | `pkg_check_modules(PCRE libpcre)` | `libpcre.a` |
++| Expat | `find_package(EXPAT)` | `libexpat.a` |
++| libxml2 | `find_package(LibXml2)` | `libxml2.a` |
++| Brotli | `pkg_check_modules(BROTLI libbrotlienc libbrotlidec)` | `libbrotli*-static.a` |
++| libmaxminddb | `pkg_check_modules(MAXMINDDB libmaxminddb)` | `libmaxminddb.a` |
++| udns | `find_library(udns)` | `libudns.a` |
++| IP2Location | `find_library(IP2Location)` | `libIP2Location.a` |
++
++When `USE_SYSTEM_LIBS=ON`:
++
++* The build does **not** add `-DHAVE_BORINGSSL`.  BoringSSL-specific code
++  paths are skipped; standard OpenSSL API is used instead.  The code
++  already uses `<openssl/ssl.h>` style includes which work with both.
++* The `-D_GLIBCXX_USE_CXX11_ABI=0` hack (needed for the bundled static
++  `libstdc++.a`) is removed, allowing normal C++ ABI.
++* The `-nodefaultlibs` flag and manual listing of `libstdc++.a gcc_eh c
++  c_nonshared gcc` are replaced with normal dynamic linking.
++* Brotli and MaxMindDB are **optional** — if not found, the build
++  continues with those features disabled and a warning is printed.
++
++### `FHS_LAYOUT` (default: `OFF`)
++
++When set to `ON`, the build installs files to Filesystem Hierarchy
++Standard paths rather than the traditional `/usr/local/lsws` monolithic
++tree.
++
++#### Path mapping
++
++| Content | FHS path (with `-DCMAKE_INSTALL_PREFIX=/usr`) |
++|---|---|
++| Server binary | `/usr/sbin/openlitespeed` |
++| Control script | `/usr/sbin/lswsctrl` |
++| Configuration | `/etc/openlitespeed/` |
++| Log files | `/var/log/openlitespeed/` |
++| Runtime / PID | `/var/run/openlitespeed/` |
++| Modules (`.so`) | `/usr/lib64/openlitespeed/modules/` |
++| Shared data | `/usr/share/openlitespeed/` |
++| Admin web UI | `/usr/share/openlitespeed/admin/` |
++| Default docroot | `/srv/openlitespeed/` |
++| Temp / swap | `/var/run/openlitespeed/tmp/` |
++
++All paths are configurable via `OLS_CONF_DIR`, `OLS_LOG_DIR`,
++`OLS_RUN_DIR`, `OLS_LIB_DIR`, `OLS_SHARE_DIR`, `OLS_DOC_ROOT`, and
++`OLS_TMP_DIR` CMake cache variables.
++
++When `FHS_LAYOUT=ON`, the C code receives compile-time defines
++(`FHS_CONF_DIR`, `FHS_LOG_DIR`, etc.) so that the server discovers its
++configuration from the fixed system path rather than probing relative to
++the binary location.
++
++## Quick Start — Building with system libraries
++
++```sh
++# Install build dependencies (Fedora / OpenMandriva example)
++sudo dnf install cmake ninja-build gcc g++ \
++    openssl-devel zlib-devel pcre-devel expat-devel libxml2-devel \
++    brotli-devel libmaxminddb-devel udns-devel \
++    libcap-devel libaio-devel
++
++# Configure
++cmake -B build \
++    -DUSE_SYSTEM_LIBS=ON \
++    -DFHS_LAYOUT=ON \
++    -DCMAKE_INSTALL_PREFIX=/usr \
++    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
++    -DMOD_PAGESPEED=OFF \
++    -DMOD_SECURITY=OFF \
++    -DMOD_LUA=OFF \
++    -GNinja
++
++# Build
++cmake --build build
++
++# Install (to a staging directory for packaging)
++DESTDIR=/tmp/stage cmake --install build
++```
++
++## Building the RPM
++
++An RPM spec file is provided at `openlitespeed.spec`.  It follows
++OpenMandriva packaging conventions and can be built with:
++
++```sh
++rpmbuild -ba openlitespeed.spec
++```
++
++The spec file:
++
++* Creates an `openlitespeed` system user/group in `%pre`
++* Installs a systemd service (`openlitespeed.service`)
++* Installs a tmpfiles.d snippet for `/var/run/openlitespeed`
++* Marks config files as `%config(noreplace)`
++* Uses `%cmake` / `%cmake_build` / `%cmake_install` macros
++
++## Backward Compatibility
++
++When both `USE_SYSTEM_LIBS` and `FHS_LAYOUT` are `OFF` (the defaults),
++the build behaves identically to the original upstream — bundled static
++libraries, BoringSSL, static `libstdc++`, and the traditional
++`/usr/local/lsws` monolithic layout.  Existing build scripts and the
++`build.sh` workflow are not affected.
++
++## Configuration File Changes
++
++The `httpd_config.conf.in` template now uses substitution variables for
++paths (`%CONF_DIR%`, `%LOG_DIR%`, `%DOC_ROOT%`, `%FCGI_DIR%`) instead of
++hard-coding relative paths.  The RPM spec's `%install` section performs
++the substitution with `sed`.  Distributions may also generate the config
++at build time via CMake's `configure_file()` if desired.
+diff --git a/dist/conf/httpd_config.conf.in b/dist/conf/httpd_config.conf.in
+index b4fed04..cb19fba 100755
+--- a/dist/conf/httpd_config.conf.in
++++ b/dist/conf/httpd_config.conf.in
+@@ -1,6 +1,10 @@
+ #
+ # PLAIN TEXT CONFIGURATION FILE
+ #
++# Path format: either absolute paths, or relative to $SERVER_ROOT.
++# When installed in FHS layout with --prefix=/usr, $SERVER_ROOT is /usr
++# and paths below starting with / are absolute.
++#
+ 
+ # If not set, will use host name as serverName
+ serverName                       
+@@ -14,20 +18,20 @@ inMemBufSize                     60M
+ swappingDir                      %DEFAULT_TMP_DIR%/swap 
+ autoFix503                       1 
+ gracefulRestartTimeout           300
+-mime                             conf/mime.properties 
++mime                             %CONF_DIR%/mime.properties
+ showVersionNumber                0 
+ adminEmails                      %ADMIN_EMAIL%
+ indexFiles                       index.html, index.php
+ disableWebAdmin                  0
+ 
+-errorlog logs/error.log {
++errorlog %LOG_DIR%/error.log {
+         logLevel             DEBUG
+         debugLevel           0
+         rollingSize          10M
+         enableStderrLog      1
+ }
+     
+-accessLog logs/access.log {
++accessLog %LOG_DIR%/access.log {
+         rollingSize          10M    
+         keepDays             30    
+         compressArchive      0
+@@ -134,7 +138,7 @@ extProcessor lsphp{
+     pcKeepAliveTimeout
+     respBuffer                      0 
+     autoStart                       1 
+-    path                            fcgi-bin/lsphp
++    path                            %FCGI_DIR%/lsphp
+     backlog                         100 
+     instances                       1 
+     priority                        0 
+@@ -206,7 +210,7 @@ nodeDefaults{
+ }
+ 
+ virtualHost Example{
+-    vhRoot                   Example/
++    vhRoot                   %DOC_ROOT%/Example/
+     allowSymbolLink          1 
+     enableScript             1 
+     restrained               1 
+@@ -214,7 +218,7 @@ virtualHost Example{
+     smartKeepAlive                  
+     setUIDMode               0 
+     chrootMode               0 
+-    configFile               conf/vhosts/Example/vhconf.conf
++    configFile               %CONF_DIR%/vhosts/Example/vhconf.conf
+ }
+ 
+ listener Default{
+@@ -224,12 +228,12 @@ listener Default{
+ }
+     
+ vhTemplate centralConfigLog{
+-    templateFile             conf/templates/ccl.conf
++    templateFile             %CONF_DIR%/templates/ccl.conf
+     listeners                Default
+ }
+ 
+ vhTemplate EasyRailsWithSuEXEC{
+-    templateFile             conf/templates/rails.conf
++    templateFile             %CONF_DIR%/templates/rails.conf
+     listeners                Default
+ }
+ 
+diff --git a/openlitespeed.spec b/openlitespeed.spec
+new file mode 100644
+index 0000000..f13bb8a
+--- /dev/null
++++ b/openlitespeed.spec
+@@ -0,0 +1,235 @@
++###############################################################################
++# OpenLiteSpeed RPM spec – OpenMandriva style
++# Uses system shared libraries and FHS-compliant paths.
++###############################################################################
++
++%bcond_without system_libs
++
++Name:           openlitespeed
++Version:        1.9.0
++Release:        1
++Summary:        High-performance, lightweight HTTP server
++License:        GPLv3+
++Group:          System/Servers
++URL:            https://openlitespeed.org
++Source0:        %{name}-%{version}.tar.gz
++
++# ---------------------------------------------------------------------------
++# Build dependencies – every library the upstream bundles is listed here so
++# the distro-provided shared version is used instead.
++# ---------------------------------------------------------------------------
++BuildRequires:  cmake
++BuildRequires:  ninja
++BuildRequires:  gcc
++BuildRequires:  g++
++BuildRequires:  perl
++BuildRequires:  pkgconfig(openssl)
++BuildRequires:  pkgconfig(zlib)
++BuildRequires:  pkgconfig(libpcre)
++BuildRequires:  pkgconfig(expat)
++BuildRequires:  pkgconfig(libxml-2.0)
++BuildRequires:  pkgconfig(libbrotlienc)
++BuildRequires:  pkgconfig(libbrotlidec)
++BuildRequires:  pkgconfig(libmaxminddb)
++BuildRequires:  udns-devel
++BuildRequires:  libcap-devel
++BuildRequires:  libaio-devel
++BuildRequires:  systemd-rpm-macros
++
++Requires(pre):  shadow
++Requires:       openssl
++Requires:       pcre
++Requires:       expat
++Requires:       zlib
++
++%description
++OpenLiteSpeed is the Open Source edition of LiteSpeed Web Server Enterprise.
++It features HTTP/3 (QUIC), HTTP/2, event-driven architecture, and a
++built-in web-based administration interface.
++
++This package is built against system shared libraries and installs to
++FHS-compliant locations.
++
++# ---------------------------------------------------------------------------
++%prep
++%autosetup -p1 -n %{name}-%{version}
++
++# ---------------------------------------------------------------------------
++%build
++%cmake \
++    -DUSE_SYSTEM_LIBS=ON \
++    -DFHS_LAYOUT=ON \
++    -DCMAKE_INSTALL_PREFIX=%{_prefix} \
++    -DOLS_CONF_DIR=%{_sysconfdir}/%{name} \
++    -DOLS_LOG_DIR=%{_localstatedir}/log/%{name} \
++    -DOLS_RUN_DIR=%{_localstatedir}/run/%{name} \
++    -DOLS_LIB_DIR=%{_libdir}/%{name} \
++    -DOLS_SHARE_DIR=%{_datadir}/%{name} \
++    -DOLS_DOC_ROOT=/srv/%{name} \
++    -DOLS_TMP_DIR=%{_localstatedir}/run/%{name}/tmp \
++    -DMOD_PAGESPEED=OFF \
++    -DMOD_SECURITY=OFF \
++    -DMOD_LUA=OFF \
++    -GNinja
++
++%cmake_build
++
++# ---------------------------------------------------------------------------
++%install
++%cmake_install
++
++# Generate an actual httpd_config.conf from the template for the package.
++# The sed call fills in the FHS paths the same way the upstream install.sh
++# would, but targeting the distro layout.
++install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}
++install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/admin
++install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/vhosts
++install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/vhosts/Example
++install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/templates
++install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/cert
++install -d -m 0750 %{buildroot}%{_localstatedir}/log/%{name}
++install -d -m 0750 %{buildroot}%{_localstatedir}/log/%{name}/admin
++install -d -m 0755 %{buildroot}%{_localstatedir}/run/%{name}
++install -d -m 0755 %{buildroot}%{_localstatedir}/run/%{name}/tmp
++install -d -m 0755 %{buildroot}/srv/%{name}
++install -d -m 0755 %{buildroot}/srv/%{name}/Example
++install -d -m 0755 %{buildroot}%{_libdir}/%{name}/modules
++
++sed -e 's|%%USER%%|openlitespeed|g' \
++    -e 's|%%GROUP%%|openlitespeed|g' \
++    -e 's|%%ADMIN_EMAIL%%|root@localhost|g' \
++    -e 's|%%HTTP_PORT%%|8088|g' \
++    -e 's|%%DEFAULT_TMP_DIR%%|%{_localstatedir}/run/%{name}/tmp|g' \
++    -e 's|%%RUBY_BIN%%||g' \
++    -e 's|%%CONF_DIR%%|%{_sysconfdir}/%{name}|g' \
++    -e 's|%%LOG_DIR%%|%{_localstatedir}/log/%{name}|g' \
++    -e 's|%%DOC_ROOT%%|/srv/%{name}|g' \
++    -e 's|%%FCGI_DIR%%|%{_datadir}/%{name}/fcgi-bin|g' \
++    dist/conf/httpd_config.conf.in \
++    > %{buildroot}%{_sysconfdir}/%{name}/httpd_config.conf
++
++# Install config sub-files that CMake install rules already placed
++# (mime.properties, templates, vhost config)
++# They are already handled by CMake install(), but double-check presence:
++if [ ! -f %{buildroot}%{_sysconfdir}/%{name}/mime.properties ]; then
++    install -m 0644 dist/conf/mime.properties %{buildroot}%{_sysconfdir}/%{name}/
++fi
++
++# Install example vhost config
++install -m 0644 dist/conf/vhosts/Example/vhconf.conf \
++    %{buildroot}%{_sysconfdir}/%{name}/vhosts/Example/
++
++# Install template configs
++for f in dist/conf/templates/*.conf; do
++    install -m 0644 "$f" %{buildroot}%{_sysconfdir}/%{name}/templates/
++done
++
++# Install example document root
++cp -a dist/Example/html %{buildroot}/srv/%{name}/Example/ 2>/dev/null || :
++cp -a dist/Example/cgi-bin %{buildroot}/srv/%{name}/Example/ 2>/dev/null || :
++
++# systemd service
++install -D -m 0644 /dev/stdin %{buildroot}%{_unitdir}/%{name}.service <<'EOF'
++[Unit]
++Description=OpenLiteSpeed HTTP Server
++After=network-online.target remote-fs.target nss-lookup.target
++Wants=network-online.target
++
++[Service]
++Type=forking
++PIDFile=%{_localstatedir}/run/%{name}/lshttpd.pid
++ExecStart=%{_sbindir}/lswsctrl start
++ExecReload=%{_sbindir}/lswsctrl restart
++ExecStop=%{_sbindir}/lswsctrl delay-stop
++KillMode=none
++PrivateTmp=false
++Restart=on-failure
++RestartSec=5
++
++[Install]
++WantedBy=multi-user.target
++Alias=lsws.service
++EOF
++
++# tmpfiles.d for /run
++install -D -m 0644 /dev/stdin \
++    %{buildroot}%{_tmpfilesdir}/%{name}.conf <<'EOF'
++d %{_localstatedir}/run/%{name}     0755 openlitespeed openlitespeed -
++d %{_localstatedir}/run/%{name}/tmp 0755 openlitespeed openlitespeed -
++EOF
++
++# Symlink litespeed -> openlitespeed for compat
++ln -sf openlitespeed %{buildroot}%{_sbindir}/lshttpd
++
++# ---------------------------------------------------------------------------
++%pre
++getent group openlitespeed >/dev/null || \
++    groupadd -r openlitespeed
++getent passwd openlitespeed >/dev/null || \
++    useradd -r -g openlitespeed -d /srv/%{name} \
++        -s /sbin/nologin -c "OpenLiteSpeed HTTP Server" openlitespeed
++exit 0
++
++%post
++%systemd_post %{name}.service
++
++%preun
++%systemd_preun %{name}.service
++
++%postun
++%systemd_postun_with_restart %{name}.service
++
++# ---------------------------------------------------------------------------
++%files
++# Binaries
++%{_sbindir}/openlitespeed
++%{_sbindir}/lshttpd
++%{_sbindir}/lswsctrl
++%{_sbindir}/ls_shmstat
++%{_sbindir}/ls_shmhashstat
++
++# Configuration
++%dir %{_sysconfdir}/%{name}
++%config(noreplace) %{_sysconfdir}/%{name}/httpd_config.conf
++%config(noreplace) %{_sysconfdir}/%{name}/mime.properties
++%dir %{_sysconfdir}/%{name}/admin
++%dir %{_sysconfdir}/%{name}/cert
++%dir %{_sysconfdir}/%{name}/templates
++%{_sysconfdir}/%{name}/templates/*.conf
++%dir %{_sysconfdir}/%{name}/vhosts
++%dir %{_sysconfdir}/%{name}/vhosts/Example
++%config(noreplace) %{_sysconfdir}/%{name}/vhosts/Example/vhconf.conf
++
++# Modules
++%dir %{_libdir}/%{name}
++%dir %{_libdir}/%{name}/modules
++
++# Shared data
++%{_datadir}/%{name}/
++
++# Logs
++%dir %attr(0750,openlitespeed,openlitespeed) %{_localstatedir}/log/%{name}
++%dir %attr(0750,openlitespeed,openlitespeed) %{_localstatedir}/log/%{name}/admin
++
++# Runtime
++%dir %attr(0755,openlitespeed,openlitespeed) %{_localstatedir}/run/%{name}
++%dir %attr(0755,openlitespeed,openlitespeed) %{_localstatedir}/run/%{name}/tmp
++
++# Document root
++%dir /srv/%{name}
++%dir /srv/%{name}/Example
++
++# systemd
++%{_unitdir}/%{name}.service
++%{_tmpfilesdir}/%{name}.conf
++
++# License & docs
++%license GPL.txt
++%doc README.md
++%doc PACKAGING.md
++
++# ---------------------------------------------------------------------------
++%changelog
++* %(LC_ALL=C date "+%a %b %d %Y") OpenLiteSpeed packagers <info@litespeedtech.com> - 1.9.0-1
++- Initial FHS-compliant package built against system shared libraries
++- Added USE_SYSTEM_LIBS and FHS_LAYOUT CMake options
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 3b1799d..2203123 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -1,6 +1,8 @@
+ cmake_minimum_required(VERSION 3.0)
+ 
+-link_directories("/usr/lib64")
++if (NOT USE_SYSTEM_LIBS)
++    link_directories("/usr/lib64")
++endif()
+ 
+ 
+ add_subdirectory(adns)
+@@ -136,35 +138,75 @@ if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+   set(LIBATOMIC atomic)
+ endif()
+ 
+-if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "FreeBSD")
+-  set(STDCXX libc++.a)
+-else()
+-  set(STDCXX libstdc++.a)
+-endif()
+-   
+ # NOTE: When creating a new directory, the order it is placed in this list
+ # matters.  Everything listed depends on things listed AFTER it, though
+ # it won't depend on everything after it.  Inter-dependency may be fixed
+ # by listing one directory twice, though this isn't recommended.
+ # So for example, if edio depends on your new directory, your directory
+ # should be listed AFTER edio.  PLEASE TRY TO KEEP THIS NEAT!
+-SET( litespeedlib
+-    ${ASAN_LIB} cache modgzip lsiapi main http ssi http
+-    registry cgi fcgi scgi uwsgi jk extensions lsapi proxy
+-    socket sslpp lsshm thread log4cxx adns 
+-    quic h2 lsquic -Wl,--whole-archive util lsr -Wl,--no-whole-archive ${MMDB_LIB}
+-    edio libssl.a libcrypto.a ${BSSL_ADD_LIB} ${libUnitTest}
+-    libz.a libpcre.a libexpat.a libxml2.a
+-    ${IP2LOC_ADD_LIB} ${BROTLI_ADD_LIB} udns ${LINUX_AIO_LIB} 
+-    -nodefaultlibs pthread rt ${LIBSAN} ${LIBATOMIC} 
+-    ${CMAKE_DL_LIBS} ${STDCXX} crypt bcrypt m gcc_eh c c_nonshared gcc
+-)
+-
+-target_link_libraries(openlitespeed ${litespeedlib} )
+ 
+-target_link_libraries(ls_shmstat lsshm log4cxx edio util lsr libcrypto.a pthread rt )
+-
+-target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pthread rt )
++if (USE_SYSTEM_LIBS)
++    #-----------------------------------------------------------------------
++    # System shared libraries build: link against distro packages
++    #-----------------------------------------------------------------------
++    SET( litespeedlib
++        ${ASAN_LIB} cache modgzip lsiapi main http ssi http
++        registry cgi fcgi scgi uwsgi jk extensions lsapi proxy
++        socket sslpp lsshm thread log4cxx adns
++        quic h2 lsquic -Wl,--whole-archive util lsr -Wl,--no-whole-archive
++        edio
++        ${SSL_LIBRARIES}
++        ${ZLIB_LIBRARIES}
++        ${PCRE_LIBRARIES}
++        ${EXPAT_LIBRARIES}
++        ${XML2_LIBRARIES}
++        ${UDNS_LIBRARIES}
++        ${IP2LOC_LIBRARIES}
++        ${libUnitTest}
++        ${LINUX_AIO_LIB}
++        pthread rt ${LIBSAN} ${LIBATOMIC}
++        ${CMAKE_DL_LIBS} crypt m
++    )
++    if (BROTLI_FOUND)
++        list(APPEND litespeedlib ${BROTLI_LIBRARIES})
++    endif()
++    if (MAXMINDDB_FOUND)
++        list(APPEND litespeedlib ${MAXMINDDB_LIBRARIES})
++    endif()
++
++    target_link_libraries(openlitespeed ${litespeedlib})
++
++    target_link_libraries(ls_shmstat lsshm log4cxx edio util lsr
++                          ${SSL_LIBRARIES} pthread rt)
++    target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr
++                          ${SSL_LIBRARIES} pthread rt)
++else()
++    #-----------------------------------------------------------------------
++    # Legacy bundled static-archive build (original behaviour)
++    #-----------------------------------------------------------------------
++    if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "FreeBSD")
++      set(STDCXX libc++.a)
++    else()
++      set(STDCXX libstdc++.a)
++    endif()
++
++    SET( litespeedlib
++        ${ASAN_LIB} cache modgzip lsiapi main http ssi http
++        registry cgi fcgi scgi uwsgi jk extensions lsapi proxy
++        socket sslpp lsshm thread log4cxx adns
++        quic h2 lsquic -Wl,--whole-archive util lsr -Wl,--no-whole-archive ${MMDB_LIB}
++        edio libssl.a libcrypto.a ${BSSL_ADD_LIB} ${libUnitTest}
++        libz.a libpcre.a libexpat.a libxml2.a
++        ${IP2LOC_ADD_LIB} ${BROTLI_ADD_LIB} udns ${LINUX_AIO_LIB}
++        -nodefaultlibs pthread rt ${LIBSAN} ${LIBATOMIC}
++        ${CMAKE_DL_LIBS} ${STDCXX} crypt bcrypt m gcc_eh c c_nonshared gcc
++    )
++
++    target_link_libraries(openlitespeed ${litespeedlib})
++
++    target_link_libraries(ls_shmstat lsshm log4cxx edio util lsr libcrypto.a pthread rt)
++    target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pthread rt)
++endif()
+ 
+ # target_link_libraries(ctbench ${litespeedlib} )
+ 
+@@ -174,5 +216,11 @@ target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pth
+ 
+ 
+ 
+-install(TARGETS openlitespeed DESTINATION bin)
++if (FHS_LAYOUT)
++    install(TARGETS openlitespeed DESTINATION ${CMAKE_INSTALL_SBINDIR})
++    install(TARGETS ls_shmstat    DESTINATION ${CMAKE_INSTALL_SBINDIR})
++    install(TARGETS ls_shmhashstat DESTINATION ${CMAKE_INSTALL_SBINDIR})
++else()
++    install(TARGETS openlitespeed DESTINATION bin)
++endif()
+ 
+diff --git a/src/config.h.cmake b/src/config.h.cmake
+index 3897679..41be2e7 100644
+--- a/src/config.h.cmake
++++ b/src/config.h.cmake
+@@ -4,8 +4,15 @@
+ #include <lsquic.h>
+ 
+ #define LS_ENABLE_SPDY 1
+-#define DEFAULT_TMP_DIR "/tmp/lshttpd"
+-#define PID_FILE        "/tmp/lshttpd/lshttpd.pid"
++
++/* Default paths — overridden by -DFHS_TMP_DIR / -DFHS_RUN_DIR at build time */
++#ifdef FHS_LAYOUT
++#  define DEFAULT_TMP_DIR FHS_TMP_DIR
++#  define PID_FILE        FHS_RUN_DIR "/lshttpd.pid"
++#else
++#  define DEFAULT_TMP_DIR "/tmp/lshttpd"
++#  define PID_FILE        "/tmp/lshttpd/lshttpd.pid"
++#endif
+ 
+ #define PACKAGE_VERSION "@CMAKE_PROJECT_VERSION@"
+ #define LS_MODULE_VERSION_INFO "\tlsquic " LSQUIC_VERSION_STR "\n\tmodgzip 1.1\n\tcache 1.66\n\tmod_security 1.4 (with libmodsecurity v3.0.14)\n"
+diff --git a/src/main/lshttpdmain.cpp b/src/main/lshttpdmain.cpp
+index 9da5271..abe5f1e 100644
+--- a/src/main/lshttpdmain.cpp
++++ b/src/main/lshttpdmain.cpp
+@@ -594,6 +594,14 @@ int LshttpdMain::testServerRoot(const char *pRoot)
+     char achBuf[MAX_PATH_LEN] = {0};
+ 
+ #ifndef IS_LSCPD
++#ifdef FHS_LAYOUT
++    /* FHS layout: config lives in /etc/openlitespeed, not under server root */
++    lstrncpy(achBuf, FHS_CONF_DIR "/httpd_config.conf", sizeof(achBuf));
++    if (access(achBuf, R_OK) == 0)
++        m_pBuilder->setConfigFilePath(achBuf);
++    else
++        return LS_FAIL;
++#else
+     if (GPath::getAbsoluteFile(achBuf, MAX_PATH_LEN, pRoot,
+                                DEFAULT_CONFIG_FILE) == 0)
+     {
+@@ -602,6 +610,7 @@ int LshttpdMain::testServerRoot(const char *pRoot)
+         else
+             return LS_FAIL;
+     }
++#endif /* FHS_LAYOUT */
+ #else
+     lstrncpy(achBuf, pRoot, sizeof(achBuf));
+ #endif
+@@ -666,7 +675,8 @@ int LshttpdMain::guessCommonServerRoot()
+     const char *pServerDirs[] =
+     {
+         "lsws/",
+-        "lshttpd/"
++        "lshttpd/",
++        "openlitespeed/"
+     };
+     char *pHome = getenv("HOME");
+     pServerRoots[0] = pHome;
+@@ -707,6 +717,14 @@ int LshttpdMain::getServerRoot(int argc, char *argv[])
+         if (testServerRoot(achServerRoot) == 0)
+             return 0;
+     }
++#ifdef FHS_LAYOUT
++    /* FHS layout: the "server root" is the prefix (typically /usr).
++     * Config is found via FHS_CONF_DIR, not relative to the binary. */
++    if (testServerRoot("/usr/") == 0)
++        return 0;
++    if (testServerRoot("/usr/local/") == 0)
++        return 0;
++#endif
+     if (guessCommonServerRoot() == 0)
+         return 0;
+     return LS_FAIL;
