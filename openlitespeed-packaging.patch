@@ -4,10 +4,10 @@ Date:   Fri Aug 7 00:00:00 2026 +0000
 
     build: add USE_SYSTEM_LIBS and FHS_LAYOUT options for distro packaging
 
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/CMakeLists.txt openlitespeed-1.9.2/CMakeLists.txt
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/CMakeLists.txt openlitespeed-1.9.2/CMakeLists.txt
 --- a/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
-+++ b/CMakeLists.txt	2026-08-07 13:24:29.533802133 +0200
-@@ -2,9 +2,107 @@
++++ b/CMakeLists.txt	2026-08-07 19:51:31.540160084 +0200
+@@ -2,9 +2,113 @@
  set( CMAKE_EXPORT_COMPILE_COMMANDS ON)
  
  Project(openlitespeed VERSION 1.9.2)
@@ -82,14 +82,20 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +    endif()
 +
 +    # --- udns ---
-+    # udns has no .pc; fall back to a manual check
-+    find_library(UDNS_LIBRARY NAMES udns)
-+    find_path(UDNS_INCLUDE_DIR NAMES udns.h)
++    # Prefer a private static build in deps/ (udns is not in cooker/main).
++    find_path(UDNS_INCLUDE_DIR NAMES udns.h
++              PATHS ${PROJECT_SOURCE_DIR}/deps NO_DEFAULT_PATH)
++    find_library(UDNS_LIBRARY NAMES udns
++                 PATHS ${PROJECT_SOURCE_DIR}/deps NO_DEFAULT_PATH)
++    if (NOT UDNS_LIBRARY OR NOT UDNS_INCLUDE_DIR)
++        find_library(UDNS_LIBRARY NAMES udns)
++        find_path(UDNS_INCLUDE_DIR NAMES udns.h)
++    endif()
 +    if (UDNS_LIBRARY AND UDNS_INCLUDE_DIR)
 +        set(UDNS_LIBRARIES ${UDNS_LIBRARY})
 +        include_directories(${UDNS_INCLUDE_DIR})
 +    else()
-+        message(FATAL_ERROR "libudns not found (need libudns-dev / udns-devel)")
++        message(FATAL_ERROR "libudns not found (build deps/ or install udns-devel)")
 +    endif()
 +
 +    # --- IP2Location (optional) ---
@@ -116,7 +122,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  SET(CMAKE_INCLUDE_CURRENT_DIR ON)
  set(CMAKE_SKIP_BUILD_RPATH TRUE)
  
-@@ -32,8 +130,11 @@
+@@ -32,8 +136,11 @@
  OPTION(MOD_UPLOADPROGRESS "Whether uploadprogress should be built" OFF)
  OPTION(MOD_LSPHP "Whether mod_lsphp should be built" OFF)
  
@@ -130,7 +136,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  
  #SET (CMAKE_C_COMPILER         "/usr/bin/clang")
  #SET (CMAKE_CXX_COMPILER       "/usr/bin/clang++")
-@@ -96,7 +197,10 @@
+@@ -96,7 +203,10 @@
      unset(LIBSAN)
  endif()
  
@@ -142,7 +148,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  
  # Place each function/variable in its own section so the linker can drop
  # everything a given binary does not actually reference (-Wl,--gc-sections).
-@@ -124,7 +228,9 @@
+@@ -124,7 +234,9 @@
  #set(MY_CMAKE_POOL_FLAG  " -DPOOL_TESTING -DUSE_VALGRIND")
  #add_definitions(-DPOOL_TESTING)
  #add_definitions(-DLS_WORKCREW_DEBUG)
@@ -153,7 +159,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  
  #Add definition for QUIC
  add_definitions(-DH3_ALPN="\\x02h3\\x05h3-29")
-@@ -170,30 +276,34 @@
+@@ -170,30 +282,34 @@
  
  #execute_process( COMMAND ${PROJECT_SOURCE_DIR}/dlossl.sh )
  
@@ -207,7 +213,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  
  execute_process( COMMAND getconf LFS_CFLAGS
      OUTPUT_VARIABLE  LFS_CFLAGS )
-@@ -201,6 +311,36 @@
+@@ -201,6 +317,36 @@
  add_definitions( ${LFS_CFLAGS} )
  add_definitions(-DUSE_UDNS)
  
@@ -244,7 +250,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  add_subdirectory(src)
  add_subdirectory(support)
  add_subdirectory(lshostexec)
-@@ -209,3 +349,57 @@
+@@ -209,3 +355,57 @@
  enable_testing()
  add_subdirectory(test)
  endif()
@@ -302,7 +308,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +    install(DIRECTORY DESTINATION ${OLS_DOC_ROOT})
 +    install(DIRECTORY DESTINATION ${OLS_LIB_DIR}/modules)
 +endif()
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/CMakeModules/common.cmake openlitespeed-1.9.2/CMakeModules/common.cmake
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/CMakeModules/common.cmake openlitespeed-1.9.2/CMakeModules/common.cmake
 --- a/CMakeModules/common.cmake	2026-08-06 17:51:35.000000000 +0200
 +++ b/CMakeModules/common.cmake	2026-08-07 13:24:29.457801196 +0200
 @@ -1,3 +1,7 @@
@@ -315,7 +321,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +                        "${PROJECT_SOURCE_DIR}/ssl/include")
 +endif()
 +include_directories("${PROJECT_SOURCE_DIR}/src" "${PROJECT_BINARY_DIR}/src")
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/PACKAGING.md openlitespeed-1.9.2/PACKAGING.md
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/PACKAGING.md openlitespeed-1.9.2/PACKAGING.md
 --- a/PACKAGING.md	1970-01-01 01:00:00.000000000 +0100
 +++ b/PACKAGING.md	2026-08-07 13:26:18.290746710 +0200
 @@ -0,0 +1,133 @@
@@ -452,7 +458,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +hard-coding relative paths.  The RPM spec's `%install` section performs
 +the substitution with `sed`.  Distributions may also generate the config
 +at build time via CMake's `configure_file()` if desired.
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/dist/conf/httpd_config.conf.in openlitespeed-1.9.2/dist/conf/httpd_config.conf.in
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/dist/conf/httpd_config.conf.in openlitespeed-1.9.2/dist/conf/httpd_config.conf.in
 --- a/dist/conf/httpd_config.conf.in	2026-08-06 17:51:35.000000000 +0200
 +++ b/dist/conf/httpd_config.conf.in	2026-08-07 13:16:37.547126440 +0200
 @@ -1,6 +1,10 @@
@@ -532,7 +538,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
      listeners                Default
  }
  
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/openlitespeed.spec openlitespeed-1.9.2/openlitespeed.spec
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/openlitespeed.spec openlitespeed-1.9.2/openlitespeed.spec
 --- a/openlitespeed.spec	1970-01-01 01:00:00.000000000 +0100
 +++ b/openlitespeed.spec	2026-08-07 13:26:24.443664889 +0200
 @@ -0,0 +1,231 @@
@@ -767,7 +773,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +%license GPL.txt
 +%doc README.md
 +%doc PACKAGING.md
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/CMakeLists.txt openlitespeed-1.9.2/src/CMakeLists.txt
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/CMakeLists.txt openlitespeed-1.9.2/src/CMakeLists.txt
 --- a/src/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/CMakeLists.txt	2026-08-07 13:16:27.547854289 +0200
 @@ -1,6 +1,8 @@
@@ -888,7 +894,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +else()
 +    install(TARGETS openlitespeed DESTINATION bin)
 +endif()
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/config.h.cmake openlitespeed-1.9.2/src/config.h.cmake
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/config.h.cmake openlitespeed-1.9.2/src/config.h.cmake
 --- a/src/config.h.cmake	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/config.h.cmake	2026-08-07 13:16:27.551771460 +0200
 @@ -4,11 +4,17 @@
@@ -912,7 +918,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  #define LS_MODULE_VERSION_INFO_ONELINE "lsquic " LSQUIC_VERSION_STR ", modgzip 1.1, cache 1.66, mod_security 1.4 (with libmodsecurity v3.0.15)"
  #endif
 -
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/http/useacme.cpp openlitespeed-1.9.2/src/http/useacme.cpp
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/http/useacme.cpp openlitespeed-1.9.2/src/http/useacme.cpp
 --- a/src/http/useacme.cpp	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/http/useacme.cpp	2026-08-07 13:26:33.331202366 +0200
 @@ -34,6 +34,7 @@
@@ -937,7 +943,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
          int index = 3;
          for (int i = 0; i < count; i++)
          {
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/http/userdir.cpp openlitespeed-1.9.2/src/http/userdir.cpp
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/http/userdir.cpp openlitespeed-1.9.2/src/http/userdir.cpp
 --- a/src/http/userdir.cpp	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/http/userdir.cpp	2026-08-07 13:20:34.546902328 +0200
 @@ -33,7 +33,11 @@
@@ -983,7 +989,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  }
  
  
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/main/lshttpdmain.cpp openlitespeed-1.9.2/src/main/lshttpdmain.cpp
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/main/lshttpdmain.cpp openlitespeed-1.9.2/src/main/lshttpdmain.cpp
 --- a/src/main/lshttpdmain.cpp	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/main/lshttpdmain.cpp	2026-08-07 13:16:37.506347786 +0200
 @@ -594,6 +594,14 @@
@@ -1034,7 +1040,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
      if (guessCommonServerRoot() == 0)
          return 0;
      return LS_FAIL;
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/modules/CMakeLists.txt openlitespeed-1.9.2/src/modules/CMakeLists.txt
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/modules/CMakeLists.txt openlitespeed-1.9.2/src/modules/CMakeLists.txt
 --- a/src/modules/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/modules/CMakeLists.txt	2026-08-07 13:30:24.381729655 +0200
 @@ -37,4 +37,9 @@
@@ -1048,7 +1054,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +if (NOT USE_SYSTEM_LIBS)
 +    add_subdirectory(modacme)
 +endif()
-diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/modules/modacme/CMakeLists.txt openlitespeed-1.9.2/src/modules/modacme/CMakeLists.txt
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/modules/modacme/CMakeLists.txt openlitespeed-1.9.2/src/modules/modacme/CMakeLists.txt
 --- a/src/modules/modacme/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
 +++ b/src/modules/modacme/CMakeLists.txt	2026-08-07 13:30:00.492272612 +0200
 @@ -5,9 +5,22 @@

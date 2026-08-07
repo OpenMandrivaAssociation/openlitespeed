@@ -19,11 +19,13 @@ Source2:	https://github.com/litespeedtech/ls-hpack/archive/cf0f70dd10b352194c974
 Source3:	https://github.com/litespeedtech/ls-qpack/archive/91567706c41c0d97ab8dc576873ecd472d7869fa.tar.gz
 # lsquic CI pin; stock OpenSSL has no SSL_QUIC_METHOD / EVP_AEAD
 Source4:	https://github.com/google/boringssl/archive/refs/tags/0.20250807.0.tar.gz#/boringssl-0.20250807.0.tar.gz
+# udns lives in cooker extra, not main — build a private static copy
+Source5:	http://www.corpit.ru/mjt/udns/udns-0.6.tar.gz
 
 # ---------------------------------------------------------------------------
-# System libraries for everything that has a distro equivalent.  HTTP/3 still
-# needs a private BoringSSL (Source4) because lsquic's QUIC TLS hooks are not
-# implementable with OpenSSL's public API.
+# System libraries for everything that has a distro equivalent in cooker/main.
+# HTTP/3 still needs a private BoringSSL (Source4). udns (Source5) is not in
+# main, so it is built statically.
 # ---------------------------------------------------------------------------
 BuildRequires:  cmake
 BuildRequires:  ninja
@@ -36,8 +38,7 @@ BuildRequires:  pkgconfig(libxml-2.0)
 BuildRequires:  pkgconfig(libbrotlienc)
 BuildRequires:  pkgconfig(libbrotlidec)
 BuildRequires:  pkgconfig(libmaxminddb)
-BuildRequires:  udns-devel
-BuildRequires:  libcap-devel
+BuildRequires:  pkgconfig(libcap)
 BuildRequires:  libaio-devel
 BuildRequires:  systemd-rpm-macros
 BuildSystem:	cmake
@@ -67,9 +68,9 @@ It features HTTP/3 (QUIC), HTTP/2, event-driven architecture, and a
 built-in web-based administration interface.
 
 This package is built against system shared libraries (PCRE2, zlib, expat,
-brotli, maxminddb, udns, libxcrypt, …) and installs to FHS-compliant
-locations.  HTTP/3 uses a privately built BoringSSL, which is the TLS
-library lsquic supports.
+brotli, maxminddb, libxcrypt, …) and installs to FHS-compliant locations.
+HTTP/3 uses a privately built BoringSSL; async DNS uses a private static
+udns (not shipped in cooker/main).
 
 # ---------------------------------------------------------------------------
 %prep
@@ -78,6 +79,7 @@ tar xf %{S:1}
 rmdir lsquic
 mv lsquic-* lsquic
 tar xf %{S:4}
+tar xf %{S:5}
 cd lsquic/src
 rmdir lshpack
 tar xf %{S:2}
@@ -88,7 +90,7 @@ tar xf %{S:3}
 mv ls-qpack-* ls-qpack
 
 # ---------------------------------------------------------------------------
-# Must run before generated %conf: OLS cmake looks for ssl/libssl.a
+# Prepend to generated configure: OLS cmake looks for ssl/libssl.a and deps/udns
 %conf -p
 cmake -S boringssl-0.20250807.0 -B boringssl-build \
 	-DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -99,6 +101,13 @@ mkdir -p ssl
 cp -a boringssl-0.20250807.0/include ssl/
 cp boringssl-build/libssl.a boringssl-build/libcrypto.a \
 	boringssl-build/libdecrepit.a ssl/
+# udns is not in cooker/main
+cd udns-0.6
+CFLAGS="%{optflags} -fPIC" ./configure
+make staticlib
+cd ..
+mkdir -p deps
+cp udns-0.6/udns.h udns-0.6/libudns.a deps/
 
 # ---------------------------------------------------------------------------
 %install -a
