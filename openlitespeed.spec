@@ -6,28 +6,31 @@
 %bcond_without system_libs
 
 Name:           openlitespeed
-Version:        1.9.0.1
+Version:        1.9.2
 Release:        1
 Summary:        High-performance, lightweight HTTP server
 License:        GPLv3+
 Group:          System/Servers
 URL:            https://openlitespeed.org
 Source0:        https://github.com/litespeedtech/openlitespeed/archive/refs/tags/v%{version}.tar.gz
-# See https://github.com/litespeedtech/openlitespeed submodule for the exact version needed
-Source1:	https://github.com/litespeedtech/lsquic/archive/3181911301b1aa4f54c1ed690901abc674ee08fb.tar.gz
-Source2:	https://github.com/litespeedtech/ls-hpack/archive/8905c024b6d052f083a3d11d0a169b3c2735c8a1.tar.gz
-Source3:	https://github.com/litespeedtech/ls-qpack/archive/1a27f87ece031f9e2fbfb29d5b3ef0a72e0a6bbb.tar.gz
+# See LSQUICCOMMIT / lsquic .gitmodules
+Source1:	https://github.com/litespeedtech/lsquic/archive/19547405c24f60c4537478d38f4214e990be1f95.tar.gz
+Source2:	https://github.com/litespeedtech/ls-hpack/archive/cf0f70dd10b352194c97448eb5d00b4aa484f531.tar.gz
+Source3:	https://github.com/litespeedtech/ls-qpack/archive/91567706c41c0d97ab8dc576873ecd472d7869fa.tar.gz
+# lsquic CI pin; stock OpenSSL has no SSL_QUIC_METHOD / EVP_AEAD
+Source4:	https://github.com/google/boringssl/archive/refs/tags/0.20250807.0.tar.gz#/boringssl-0.20250807.0.tar.gz
 
 # ---------------------------------------------------------------------------
-# Build dependencies – every library the upstream bundles is listed here so
-# the distro-provided shared version is used instead.
+# System libraries for everything that has a distro equivalent.  HTTP/3 still
+# needs a private BoringSSL (Source4) because lsquic's QUIC TLS hooks are not
+# implementable with OpenSSL's public API.
 # ---------------------------------------------------------------------------
 BuildRequires:  cmake
 BuildRequires:  ninja
 BuildRequires:  perl
-BuildRequires:  pkgconfig(openssl)
 BuildRequires:  pkgconfig(zlib)
-BuildRequires:  pkgconfig(libpcre)
+BuildRequires:  pkgconfig(libpcre2-8)
+BuildRequires:  pkgconfig(libcrypt)
 BuildRequires:  pkgconfig(expat)
 BuildRequires:  pkgconfig(libxml-2.0)
 BuildRequires:  pkgconfig(libbrotlienc)
@@ -52,10 +55,8 @@ BuildOption:	-DMOD_SECURITY=OFF
 BuildOption:	-DMOD_LUA=OFF
 
 Requires(pre):  shadow
+# openssl(1) is invoked by admin/ACME helper scripts
 Requires:       openssl
-Requires:       pcre
-Requires:       expat
-Requires:       zlib
 
 %patchlist
 openlitespeed-packaging.patch
@@ -65,14 +66,18 @@ OpenLiteSpeed is the Open Source edition of LiteSpeed Web Server Enterprise.
 It features HTTP/3 (QUIC), HTTP/2, event-driven architecture, and a
 built-in web-based administration interface.
 
-This package is built against system shared libraries and installs to
-FHS-compliant locations.
+This package is built against system shared libraries (PCRE2, zlib, expat,
+brotli, maxminddb, udns, libxcrypt, …) and installs to FHS-compliant
+locations.  HTTP/3 uses a privately built BoringSSL, which is the TLS
+library lsquic supports.
 
 # ---------------------------------------------------------------------------
 %prep
-%autosetup -p1 -a1 -n %{name}-%{version}
+%autosetup -p1 -n %{name}-%{version}
+tar xf %{S:1}
 rmdir lsquic
 mv lsquic-* lsquic
+tar xf %{S:4}
 cd lsquic/src
 rmdir lshpack
 tar xf %{S:2}
@@ -83,8 +88,25 @@ tar xf %{S:3}
 mv ls-qpack-* ls-qpack
 
 # ---------------------------------------------------------------------------
+# Must run before generated %conf: OLS cmake looks for ssl/libssl.a
+%conf -p
+cmake -S boringssl-0.20250807.0 -B boringssl-build \
+	-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+	-GNinja
+cmake --build boringssl-build --target ssl crypto decrepit
+mkdir -p ssl
+cp -a boringssl-0.20250807.0/include ssl/
+cp boringssl-build/libssl.a boringssl-build/libcrypto.a \
+	boringssl-build/libdecrepit.a ssl/
+
+# ---------------------------------------------------------------------------
 %install -a
-%cmake_install
+# lsquic's own cmake install() dumps a public static lib + cmake package
+rm -f %{buildroot}%{_libdir}/liblsquic.a
+rm -rf %{buildroot}%{_datadir}/lsquic
+# /run is created by tmpfiles.d, not packaged
+rm -rf %{buildroot}%{_localstatedir}/run/%{name}
 
 # Generate an actual httpd_config.conf from the template for the package.
 # The sed call fills in the FHS paths the same way the upstream install.sh
@@ -97,8 +119,6 @@ install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/templates
 install -d -m 0755 %{buildroot}%{_sysconfdir}/%{name}/cert
 install -d -m 0750 %{buildroot}%{_localstatedir}/log/%{name}
 install -d -m 0750 %{buildroot}%{_localstatedir}/log/%{name}/admin
-install -d -m 0755 %{buildroot}%{_localstatedir}/run/%{name}
-install -d -m 0755 %{buildroot}%{_localstatedir}/run/%{name}/tmp
 install -d -m 0755 %{buildroot}/srv/%{name}
 install -d -m 0755 %{buildroot}/srv/%{name}/Example
 install -d -m 0755 %{buildroot}%{_libdir}/%{name}/modules
@@ -132,9 +152,11 @@ for f in dist/conf/templates/*.conf; do
     install -m 0644 "$f" %{buildroot}%{_sysconfdir}/%{name}/templates/
 done
 
-# Install example document root
-cp -a dist/Example/html %{buildroot}/srv/%{name}/Example/ 2>/dev/null || :
-cp -a dist/Example/cgi-bin %{buildroot}/srv/%{name}/Example/ 2>/dev/null || :
+# Example vhost lives in %%{_datadir}; /srv docroot stays empty for the admin.
+find %{buildroot}%{_datadir}/%{name} -name '.htaccess' -delete
+find %{buildroot}%{_datadir}/%{name} -type f \( -name '*.html' -o -name '*.css' \
+	-o -name '*.php' -o -name '*.js' -o -name '*.svg' -o -name '*.png' \) \
+	-exec chmod 0644 {} +
 
 # systemd service
 install -D -m 0644 /dev/stdin %{buildroot}%{_unitdir}/%{name}.service <<'EOF'
@@ -201,12 +223,15 @@ exit 0
 %config(noreplace) %{_sysconfdir}/%{name}/httpd_config.conf
 %config(noreplace) %{_sysconfdir}/%{name}/mime.properties
 %dir %{_sysconfdir}/%{name}/admin
+%config(noreplace) %{_sysconfdir}/%{name}/admin/php.ini
 %dir %{_sysconfdir}/%{name}/cert
 %dir %{_sysconfdir}/%{name}/templates
-%{_sysconfdir}/%{name}/templates/*.conf
+%config(noreplace) %{_sysconfdir}/%{name}/templates/*.conf
 %dir %{_sysconfdir}/%{name}/vhosts
 %dir %{_sysconfdir}/%{name}/vhosts/Example
 %config(noreplace) %{_sysconfdir}/%{name}/vhosts/Example/vhconf.conf
+%config(noreplace) %{_sysconfdir}/%{name}/vhosts/Example/htgroup
+%config(noreplace) %{_sysconfdir}/%{name}/vhosts/Example/htpasswd
 
 # Modules
 %dir %{_libdir}/%{name}
@@ -215,13 +240,9 @@ exit 0
 # Shared data
 %{_datadir}/%{name}/
 
-# Logs
+# Logs (runtime / PID dirs come from tmpfiles.d)
 %dir %attr(0750,openlitespeed,openlitespeed) %{_localstatedir}/log/%{name}
 %dir %attr(0750,openlitespeed,openlitespeed) %{_localstatedir}/log/%{name}/admin
-
-# Runtime
-%dir %attr(0755,openlitespeed,openlitespeed) %{_localstatedir}/run/%{name}
-%dir %attr(0755,openlitespeed,openlitespeed) %{_localstatedir}/run/%{name}/tmp
 
 # Document root
 %dir /srv/%{name}

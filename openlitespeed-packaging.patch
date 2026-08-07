@@ -1,35 +1,16 @@
-commit 95fd78a4b94e0c4c19ee1f9986a9eb0d73c662a5
+commit 0000000000000000000000000000000000000000
 Author: OpenLiteSpeed Packager <packager@openlitespeed.org>
-Date:   Sun May 24 15:39:38 2026 +0000
+Date:   Fri Aug 7 00:00:00 2026 +0000
 
     build: add USE_SYSTEM_LIBS and FHS_LAYOUT options for distro packaging
-    
-    Add two new CMake options:
-    
-    - USE_SYSTEM_LIBS (default OFF): Link against system shared libraries
-      (OpenSSL, zlib, PCRE, expat, libxml2, brotli, maxminddb, udns)
-      instead of bundled static archives. Removes BoringSSL dependency,
-      -nodefaultlibs hack, and static libstdc++ linking.
-    
-    - FHS_LAYOUT (default OFF): Install to FHS-compliant paths:
-      /usr/sbin for binaries, /etc/openlitespeed for config,
-      /var/log/openlitespeed for logs, /srv/openlitespeed for docroot.
-    
-    Both options default to OFF preserving full backward compatibility
-    with the existing build.sh workflow.
-    
-    New files:
-    - openlitespeed.spec: RPM spec following OpenMandriva conventions
-    - PACKAGING.md: Documentation for distribution packagers
 
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 34913d7..41a7f11 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -2,9 +2,89 @@ cmake_minimum_required(VERSION 3.0)
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/CMakeLists.txt openlitespeed-1.9.2/CMakeLists.txt
+--- a/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
++++ b/CMakeLists.txt	2026-08-07 13:24:29.533802133 +0200
+@@ -2,9 +2,107 @@
  set( CMAKE_EXPORT_COMPILE_COMMANDS ON)
  
- Project(openlitespeed VERSION 1.9.0)
+ Project(openlitespeed VERSION 1.9.2)
 -INCLUDE( ${PROJECT_SOURCE_DIR}/CMakeModules/common.cmake)
  INCLUDE(GNUInstallDirs)
  
@@ -44,19 +25,37 @@ index 34913d7..41a7f11 100644
 +# pkg_check_modules.  Otherwise fall back to the legacy bundled-library paths.
 +###############################################################################
 +if (USE_SYSTEM_LIBS)
++    add_definitions(-DUSE_SYSTEM_LIBS)
 +    include(FindPkgConfig)
++    find_package(Perl)
 +
-+    # --- OpenSSL (replaces bundled BoringSSL) ---
-+    find_package(OpenSSL REQUIRED)
-+    set(SSL_LIBRARIES OpenSSL::SSL OpenSSL::Crypto)
-+    set(SSL_INCLUDE_DIRS ${OPENSSL_INCLUDE_DIR})
++    # --- TLS ---
++    # lsquic requires BoringSSL (EVP_AEAD, SSL_QUIC_METHOD, openssl/aead.h).
++    # Stock OpenSSL cannot provide those APIs, so a private BoringSSL build
++    # (ssl/lib{ssl,crypto,decrepit}.a + ssl/include) is used for the whole
++    # server.  Everything else still comes from the system.
++    if (EXISTS "${PROJECT_SOURCE_DIR}/ssl/include/openssl/aead.h"
++        AND EXISTS "${PROJECT_SOURCE_DIR}/ssl/libssl.a")
++        set(SSL_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/ssl/include")
++        set(SSL_LIBRARIES
++            "${PROJECT_SOURCE_DIR}/ssl/libssl.a"
++            "${PROJECT_SOURCE_DIR}/ssl/libcrypto.a"
++            "${PROJECT_SOURCE_DIR}/ssl/libdecrepit.a")
++        message(STATUS "Using private BoringSSL from ${PROJECT_SOURCE_DIR}/ssl")
++        set(OLS_HAVE_BORINGSSL TRUE)
++    else()
++        message(FATAL_ERROR
++            "USE_SYSTEM_LIBS requires a private BoringSSL build in ssl/ "
++            "(libssl.a, libcrypto.a, libdecrepit.a and include/openssl/aead.h). "
++            "lsquic/HTTP3 cannot be built against stock OpenSSL.")
++    endif()
 +
 +    # --- zlib ---
 +    find_package(ZLIB REQUIRED)
 +    set(ZLIB_LIBRARIES ZLIB::ZLIB)
 +
-+    # --- PCRE ---
-+    pkg_check_modules(PCRE REQUIRED libpcre)
++    # --- PCRE2 (upstream switched from PCRE1 in 1.9.1) ---
++    pkg_check_modules(PCRE2 REQUIRED libpcre2-8)
 +
 +    # --- Expat ---
 +    find_package(EXPAT REQUIRED)
@@ -106,9 +105,9 @@ index 34913d7..41a7f11 100644
 +    endif()
 +
 +    # Propagate include dirs from pkg-config results
-+    include_directories(${SSL_INCLUDE_DIRS} ${PCRE_INCLUDE_DIRS}
++    include_directories(${SSL_INCLUDE_DIRS} ${PCRE2_INCLUDE_DIRS}
 +                        ${BROTLI_INCLUDE_DIRS} ${MAXMINDDB_INCLUDE_DIRS})
-+    link_directories(${PCRE_LIBRARY_DIRS} ${BROTLI_LIBRARY_DIRS}
++    link_directories(${PCRE2_LIBRARY_DIRS} ${BROTLI_LIBRARY_DIRS}
 +                     ${MAXMINDDB_LIBRARY_DIRS})
 +endif()
 +
@@ -117,7 +116,7 @@ index 34913d7..41a7f11 100644
  SET(CMAKE_INCLUDE_CURRENT_DIR ON)
  set(CMAKE_SKIP_BUILD_RPATH TRUE)
  
-@@ -32,8 +112,11 @@ OPTION(MOD_INSPECTOR "Whether modinspector should be built" OFF)
+@@ -32,8 +130,11 @@
  OPTION(MOD_UPLOADPROGRESS "Whether uploadprogress should be built" OFF)
  OPTION(MOD_LSPHP "Whether mod_lsphp should be built" OFF)
  
@@ -131,19 +130,19 @@ index 34913d7..41a7f11 100644
  
  #SET (CMAKE_C_COMPILER         "/usr/bin/clang")
  #SET (CMAKE_CXX_COMPILER       "/usr/bin/clang++")
-@@ -96,7 +179,10 @@ if (CMAKE_C_COMPILER MATCHES "clang")
+@@ -96,7 +197,10 @@
      unset(LIBSAN)
  endif()
  
 -set(MY_CMAKE_FLAGS  "${MY_CMAKE_FLAGS} -DHAVE_BORINGSSL -Wall -Wextra -Wno-unused-parameter -Wno-unused-function")
 +set(MY_CMAKE_FLAGS  "${MY_CMAKE_FLAGS} -Wall -Wextra -Wno-unused-parameter -Wno-unused-function")
-+if (NOT USE_SYSTEM_LIBS)
++if (NOT USE_SYSTEM_LIBS OR OLS_HAVE_BORINGSSL)
 +    set(MY_CMAKE_FLAGS "${MY_CMAKE_FLAGS} -DHAVE_BORINGSSL")
 +endif()
  
- if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-     # Suppress gcc warnings about BoringSSL's openssl/stack.h
-@@ -118,7 +204,9 @@ add_definitions(-DDISABLE_OBJ_POOL)
+ # Place each function/variable in its own section so the linker can drop
+ # everything a given binary does not actually reference (-Wl,--gc-sections).
+@@ -124,7 +228,9 @@
  #set(MY_CMAKE_POOL_FLAG  " -DPOOL_TESTING -DUSE_VALGRIND")
  #add_definitions(-DPOOL_TESTING)
  #add_definitions(-DLS_WORKCREW_DEBUG)
@@ -154,7 +153,7 @@ index 34913d7..41a7f11 100644
  
  #Add definition for QUIC
  add_definitions(-DH3_ALPN="\\x02h3\\x05h3-29")
-@@ -164,30 +252,34 @@ SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMakeModules)
+@@ -170,30 +276,34 @@
  
  #execute_process( COMMAND ${PROJECT_SOURCE_DIR}/dlossl.sh )
  
@@ -208,7 +207,7 @@ index 34913d7..41a7f11 100644
  
  execute_process( COMMAND getconf LFS_CFLAGS
      OUTPUT_VARIABLE  LFS_CFLAGS )
-@@ -195,6 +287,36 @@ execute_process( COMMAND getconf LFS_CFLAGS
+@@ -201,6 +311,36 @@
  add_definitions( ${LFS_CFLAGS} )
  add_definitions(-DUSE_UDNS)
  
@@ -245,8 +244,8 @@ index 34913d7..41a7f11 100644
  add_subdirectory(src)
  add_subdirectory(support)
  add_subdirectory(lshostexec)
-@@ -202,3 +324,57 @@ add_subdirectory(lshostexec)
- if (BUILD_TEST)
+@@ -209,3 +349,57 @@
+ enable_testing()
  add_subdirectory(test)
  endif()
 +
@@ -303,26 +302,23 @@ index 34913d7..41a7f11 100644
 +    install(DIRECTORY DESTINATION ${OLS_DOC_ROOT})
 +    install(DIRECTORY DESTINATION ${OLS_LIB_DIR}/modules)
 +endif()
-diff --git a/CMakeModules/common.cmake b/CMakeModules/common.cmake
-index 6c5d5b5..a4d40f1 100644
---- a/CMakeModules/common.cmake
-+++ b/CMakeModules/common.cmake
-@@ -1,3 +1,8 @@
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/CMakeModules/common.cmake openlitespeed-1.9.2/CMakeModules/common.cmake
+--- a/CMakeModules/common.cmake	2026-08-06 17:51:35.000000000 +0200
++++ b/CMakeModules/common.cmake	2026-08-07 13:24:29.457801196 +0200
+@@ -1,3 +1,7 @@
  cmake_minimum_required(VERSION 3.0)
 -include_directories ("${PROJECT_SOURCE_DIR}/openssl/include" "${PROJECT_SOURCE_DIR}/src" "${PROJECT_BINARY_DIR}/src")
-+if (NOT USE_SYSTEM_LIBS)
-+    # Bundled BoringSSL headers
+-
++if (NOT USE_SYSTEM_LIBS OR OLS_HAVE_BORINGSSL)
++    # BoringSSL headers (legacy third-party tree *or* private ssl/ build)
 +    include_directories("${PROJECT_SOURCE_DIR}/openssl/include"
 +                        "${PROJECT_SOURCE_DIR}/ssl/include")
 +endif()
 +include_directories("${PROJECT_SOURCE_DIR}/src" "${PROJECT_BINARY_DIR}/src")
- 
-diff --git a/PACKAGING.md b/PACKAGING.md
-new file mode 100644
-index 0000000..2beb710
---- /dev/null
-+++ b/PACKAGING.md
-@@ -0,0 +1,129 @@
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/PACKAGING.md openlitespeed-1.9.2/PACKAGING.md
+--- a/PACKAGING.md	1970-01-01 01:00:00.000000000 +0100
++++ b/PACKAGING.md	2026-08-07 13:26:18.290746710 +0200
+@@ -0,0 +1,133 @@
 +# Packaging OpenLiteSpeed for Linux Distributions
 +
 +This document describes the CMake build options added to support building
@@ -341,21 +337,25 @@ index 0000000..2beb710
 +
 +| Library | How it is found | Upstream bundled form |
 +|---|---|---|
-+| OpenSSL | `find_package(OpenSSL)` | BoringSSL static (`libssl.a`, `libcrypto.a`, `libdecrepit.a`) |
++| TLS / HTTP/3 | private BoringSSL in `ssl/` (lsquic requires `SSL_QUIC_METHOD` / `EVP_AEAD`) | same BoringSSL, via third-party tree |
++| OpenSSL (HTTPS only, no HTTP/3) | not sufficient for lsquic | — |
 +| zlib | `find_package(ZLIB)` | `libz.a` |
-+| PCRE | `pkg_check_modules(PCRE libpcre)` | `libpcre.a` |
++| PCRE2 | `pkg_check_modules(PCRE2 libpcre2-8)` | `libpcre2-8.a` |
 +| Expat | `find_package(EXPAT)` | `libexpat.a` |
 +| libxml2 | `find_package(LibXml2)` | `libxml2.a` |
 +| Brotli | `pkg_check_modules(BROTLI libbrotlienc libbrotlidec)` | `libbrotli*-static.a` |
 +| libmaxminddb | `pkg_check_modules(MAXMINDDB libmaxminddb)` | `libmaxminddb.a` |
 +| udns | `find_library(udns)` | `libudns.a` |
 +| IP2Location | `find_library(IP2Location)` | `libIP2Location.a` |
++| bcrypt | `crypt_r()` from libxcrypt (`-lcrypt`) | bundled `libbcrypt.a` (`_crypt_blowfish_rn`) |
 +
 +When `USE_SYSTEM_LIBS=ON`:
 +
-+* The build does **not** add `-DHAVE_BORINGSSL`.  BoringSSL-specific code
-+  paths are skipped; standard OpenSSL API is used instead.  The code
-+  already uses `<openssl/ssl.h>` style includes which work with both.
++* zlib, PCRE2, expat, libxml2, brotli, maxminddb, udns and libxcrypt
++  come from the system.
++* HTTP/3 still needs BoringSSL: drop a private build into `ssl/`
++  (`libssl.a`, `libcrypto.a`, `libdecrepit.a`, `include/openssl/aead.h`).
++  The build then defines `-DHAVE_BORINGSSL` and uses that tree for TLS.
 +* The `-D_GLIBCXX_USE_CXX11_ABI=0` hack (needed for the bundled static
 +  `libstdc++.a`) is removed, allowing normal C++ ABI.
 +* The `-nodefaultlibs` flag and manual listing of `libstdc++.a gcc_eh c
@@ -398,7 +398,7 @@ index 0000000..2beb710
 +```sh
 +# Install build dependencies (Fedora / OpenMandriva example)
 +sudo dnf install cmake ninja-build gcc g++ \
-+    openssl-devel zlib-devel pcre-devel expat-devel libxml2-devel \
++    openssl-devel zlib-devel pcre2-devel expat-devel libxml2-devel \
 +    brotli-devel libmaxminddb-devel udns-devel \
 +    libcap-devel libaio-devel
 +
@@ -452,10 +452,9 @@ index 0000000..2beb710
 +hard-coding relative paths.  The RPM spec's `%install` section performs
 +the substitution with `sed`.  Distributions may also generate the config
 +at build time via CMake's `configure_file()` if desired.
-diff --git a/dist/conf/httpd_config.conf.in b/dist/conf/httpd_config.conf.in
-index b4fed04..cb19fba 100755
---- a/dist/conf/httpd_config.conf.in
-+++ b/dist/conf/httpd_config.conf.in
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/dist/conf/httpd_config.conf.in openlitespeed-1.9.2/dist/conf/httpd_config.conf.in
+--- a/dist/conf/httpd_config.conf.in	2026-08-06 17:51:35.000000000 +0200
++++ b/dist/conf/httpd_config.conf.in	2026-08-07 13:16:37.547126440 +0200
 @@ -1,6 +1,10 @@
  #
  # PLAIN TEXT CONFIGURATION FILE
@@ -467,12 +466,12 @@ index b4fed04..cb19fba 100755
  
  # If not set, will use host name as serverName
  serverName                       
-@@ -14,20 +18,20 @@ inMemBufSize                     60M
+@@ -14,20 +18,20 @@
  swappingDir                      %DEFAULT_TMP_DIR%/swap 
  autoFix503                       1 
  gracefulRestartTimeout           300
 -mime                             conf/mime.properties 
-+mime                             %CONF_DIR%/mime.properties
++mime                             %CONF_DIR%/mime.properties 
  showVersionNumber                0 
  adminEmails                      %ADMIN_EMAIL%
  indexFiles                       index.html, index.php
@@ -491,7 +490,7 @@ index b4fed04..cb19fba 100755
          rollingSize          10M    
          keepDays             30    
          compressArchive      0
-@@ -134,7 +138,7 @@ extProcessor lsphp{
+@@ -134,7 +138,7 @@
      pcKeepAliveTimeout
      respBuffer                      0 
      autoStart                       1 
@@ -500,7 +499,7 @@ index b4fed04..cb19fba 100755
      backlog                         100 
      instances                       1 
      priority                        0 
-@@ -206,7 +210,7 @@ nodeDefaults{
+@@ -206,7 +210,7 @@
  }
  
  virtualHost Example{
@@ -509,7 +508,7 @@ index b4fed04..cb19fba 100755
      allowSymbolLink          1 
      enableScript             1 
      restrained               1 
-@@ -214,7 +218,7 @@ virtualHost Example{
+@@ -214,7 +218,7 @@
      smartKeepAlive                  
      setUIDMode               0 
      chrootMode               0 
@@ -518,7 +517,7 @@ index b4fed04..cb19fba 100755
  }
  
  listener Default{
-@@ -224,12 +228,12 @@ listener Default{
+@@ -224,12 +228,12 @@
  }
      
  vhTemplate centralConfigLog{
@@ -533,12 +532,10 @@ index b4fed04..cb19fba 100755
      listeners                Default
  }
  
-diff --git a/openlitespeed.spec b/openlitespeed.spec
-new file mode 100644
-index 0000000..f13bb8a
---- /dev/null
-+++ b/openlitespeed.spec
-@@ -0,0 +1,235 @@
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/openlitespeed.spec openlitespeed-1.9.2/openlitespeed.spec
+--- a/openlitespeed.spec	1970-01-01 01:00:00.000000000 +0100
++++ b/openlitespeed.spec	2026-08-07 13:26:24.443664889 +0200
+@@ -0,0 +1,231 @@
 +###############################################################################
 +# OpenLiteSpeed RPM spec – OpenMandriva style
 +# Uses system shared libraries and FHS-compliant paths.
@@ -547,13 +544,14 @@ index 0000000..f13bb8a
 +%bcond_without system_libs
 +
 +Name:           openlitespeed
-+Version:        1.9.0
++Version:        1.9.2
 +Release:        1
 +Summary:        High-performance, lightweight HTTP server
 +License:        GPLv3+
 +Group:          System/Servers
 +URL:            https://openlitespeed.org
 +Source0:        %{name}-%{version}.tar.gz
++# HTTP/3: private BoringSSL (see PACKAGING.md)
 +
 +# ---------------------------------------------------------------------------
 +# Build dependencies – every library the upstream bundles is listed here so
@@ -566,7 +564,8 @@ index 0000000..f13bb8a
 +BuildRequires:  perl
 +BuildRequires:  pkgconfig(openssl)
 +BuildRequires:  pkgconfig(zlib)
-+BuildRequires:  pkgconfig(libpcre)
++BuildRequires:  pkgconfig(libpcre2-8)
++BuildRequires:  pkgconfig(libcrypt)
 +BuildRequires:  pkgconfig(expat)
 +BuildRequires:  pkgconfig(libxml-2.0)
 +BuildRequires:  pkgconfig(libbrotlienc)
@@ -579,7 +578,7 @@ index 0000000..f13bb8a
 +
 +Requires(pre):  shadow
 +Requires:       openssl
-+Requires:       pcre
++Requires:       pcre2
 +Requires:       expat
 +Requires:       zlib
 +
@@ -768,16 +767,9 @@ index 0000000..f13bb8a
 +%license GPL.txt
 +%doc README.md
 +%doc PACKAGING.md
-+
-+# ---------------------------------------------------------------------------
-+%changelog
-+* %(LC_ALL=C date "+%a %b %d %Y") OpenLiteSpeed packagers <info@litespeedtech.com> - 1.9.0-1
-+- Initial FHS-compliant package built against system shared libraries
-+- Added USE_SYSTEM_LIBS and FHS_LAYOUT CMake options
-diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 3b1799d..2203123 100644
---- a/src/CMakeLists.txt
-+++ b/src/CMakeLists.txt
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/CMakeLists.txt openlitespeed-1.9.2/src/CMakeLists.txt
+--- a/src/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
++++ b/src/CMakeLists.txt	2026-08-07 13:16:27.547854289 +0200
 @@ -1,6 +1,8 @@
  cmake_minimum_required(VERSION 3.0)
  
@@ -788,7 +780,7 @@ index 3b1799d..2203123 100644
  
  
  add_subdirectory(adns)
-@@ -136,35 +138,75 @@ if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+@@ -138,35 +140,75 @@
    set(LIBATOMIC atomic)
  endif()
  
@@ -810,17 +802,13 @@ index 3b1799d..2203123 100644
 -    socket sslpp lsshm thread log4cxx adns 
 -    quic h2 lsquic -Wl,--whole-archive util lsr -Wl,--no-whole-archive ${MMDB_LIB}
 -    edio libssl.a libcrypto.a ${BSSL_ADD_LIB} ${libUnitTest}
--    libz.a libpcre.a libexpat.a libxml2.a
+-    libz.a libpcre2-8.a libexpat.a libxml2.a
 -    ${IP2LOC_ADD_LIB} ${BROTLI_ADD_LIB} udns ${LINUX_AIO_LIB} 
 -    -nodefaultlibs pthread rt ${LIBSAN} ${LIBATOMIC} 
 -    ${CMAKE_DL_LIBS} ${STDCXX} crypt bcrypt m gcc_eh c c_nonshared gcc
 -)
--
--target_link_libraries(openlitespeed ${litespeedlib} )
  
--target_link_libraries(ls_shmstat lsshm log4cxx edio util lsr libcrypto.a pthread rt )
--
--target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pthread rt )
+-target_link_libraries(openlitespeed ${litespeedlib} )
 +if (USE_SYSTEM_LIBS)
 +    #-----------------------------------------------------------------------
 +    # System shared libraries build: link against distro packages
@@ -833,7 +821,7 @@ index 3b1799d..2203123 100644
 +        edio
 +        ${SSL_LIBRARIES}
 +        ${ZLIB_LIBRARIES}
-+        ${PCRE_LIBRARIES}
++        ${PCRE2_LIBRARIES}
 +        ${EXPAT_LIBRARIES}
 +        ${XML2_LIBRARIES}
 +        ${UDNS_LIBRARIES}
@@ -872,21 +860,23 @@ index 3b1799d..2203123 100644
 +        socket sslpp lsshm thread log4cxx adns
 +        quic h2 lsquic -Wl,--whole-archive util lsr -Wl,--no-whole-archive ${MMDB_LIB}
 +        edio libssl.a libcrypto.a ${BSSL_ADD_LIB} ${libUnitTest}
-+        libz.a libpcre.a libexpat.a libxml2.a
++        libz.a libpcre2-8.a libexpat.a libxml2.a
 +        ${IP2LOC_ADD_LIB} ${BROTLI_ADD_LIB} udns ${LINUX_AIO_LIB}
 +        -nodefaultlibs pthread rt ${LIBSAN} ${LIBATOMIC}
 +        ${CMAKE_DL_LIBS} ${STDCXX} crypt bcrypt m gcc_eh c c_nonshared gcc
 +    )
-+
+ 
+-target_link_libraries(ls_shmstat lsshm log4cxx edio util lsr libcrypto.a pthread rt )
 +    target_link_libraries(openlitespeed ${litespeedlib})
-+
+ 
+-target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pthread rt )
 +    target_link_libraries(ls_shmstat lsshm log4cxx edio util lsr libcrypto.a pthread rt)
 +    target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pthread rt)
 +endif()
  
  # target_link_libraries(ctbench ${litespeedlib} )
  
-@@ -174,5 +216,11 @@ target_link_libraries(ls_shmhashstat lsshm log4cxx edio util lsr libcrypto.a pth
+@@ -176,4 +218,10 @@
  
  
  
@@ -898,12 +888,10 @@ index 3b1799d..2203123 100644
 +else()
 +    install(TARGETS openlitespeed DESTINATION bin)
 +endif()
- 
-diff --git a/src/config.h.cmake b/src/config.h.cmake
-index 3897679..41be2e7 100644
---- a/src/config.h.cmake
-+++ b/src/config.h.cmake
-@@ -4,8 +4,15 @@
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/config.h.cmake openlitespeed-1.9.2/src/config.h.cmake
+--- a/src/config.h.cmake	2026-08-06 17:51:35.000000000 +0200
++++ b/src/config.h.cmake	2026-08-07 13:16:27.551771460 +0200
+@@ -4,11 +4,17 @@
  #include <lsquic.h>
  
  #define LS_ENABLE_SPDY 1
@@ -920,12 +908,85 @@ index 3897679..41be2e7 100644
 +#endif
  
  #define PACKAGE_VERSION "@CMAKE_PROJECT_VERSION@"
- #define LS_MODULE_VERSION_INFO "\tlsquic " LSQUIC_VERSION_STR "\n\tmodgzip 1.1\n\tcache 1.66\n\tmod_security 1.4 (with libmodsecurity v3.0.14)\n"
-diff --git a/src/main/lshttpdmain.cpp b/src/main/lshttpdmain.cpp
-index 9da5271..abe5f1e 100644
---- a/src/main/lshttpdmain.cpp
-+++ b/src/main/lshttpdmain.cpp
-@@ -594,6 +594,14 @@ int LshttpdMain::testServerRoot(const char *pRoot)
+ #define LS_MODULE_VERSION_INFO "\tlsquic " LSQUIC_VERSION_STR "\n\tmodgzip 1.1\n\tcache 1.66\n\tmod_security 1.4 (with libmodsecurity v3.0.15)\n"
+ #define LS_MODULE_VERSION_INFO_ONELINE "lsquic " LSQUIC_VERSION_STR ", modgzip 1.1, cache 1.66, mod_security 1.4 (with libmodsecurity v3.0.15)"
+ #endif
+-
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/http/useacme.cpp openlitespeed-1.9.2/src/http/useacme.cpp
+--- a/src/http/useacme.cpp	2026-08-06 17:51:35.000000000 +0200
++++ b/src/http/useacme.cpp	2026-08-07 13:26:33.331202366 +0200
+@@ -34,6 +34,7 @@
+ #include <fcntl.h>
+ #include <ifaddrs.h>
+ #include <pwd.h>
++#include <stdlib.h>
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+@@ -486,7 +487,12 @@
+         snprintf(serverEnv, sizeof(serverEnv), "ACME_DIRECTORY=%s", UseAcme::getServer());
+         char *p = env ? strdup(env) : NULL;
+         int count = envCount(p);
+-        const char *envp[4 + count] = { configEnv, acmeEnv, serverEnv };
++        const char **envp = (const char **)malloc(sizeof(char *) * (4 + count));
++        if (!envp)
++            _exit(1);
++        envp[0] = configEnv;
++        envp[1] = acmeEnv;
++        envp[2] = serverEnv;
+         int index = 3;
+         for (int i = 0; i < count; i++)
+         {
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/http/userdir.cpp openlitespeed-1.9.2/src/http/userdir.cpp
+--- a/src/http/userdir.cpp	2026-08-06 17:51:35.000000000 +0200
++++ b/src/http/userdir.cpp	2026-08-07 13:20:34.546902328 +0200
+@@ -33,7 +33,11 @@
+ #include <openssl/md5.h>
+ #include <openssl/sha.h>
+ #include <string.h>
++#ifdef USE_SYSTEM_LIBS
++#include <errno.h>
++#else
+ #include <bcrypt.h>
++#endif
+ 
+ 
+ UserDir::~UserDir()
+@@ -440,11 +444,22 @@
+         return ret;
+ }
+ 
++#ifndef USE_SYSTEM_LIBS
+ extern "C" char *_crypt_blowfish_rn(const char *key, const char *setting,
+         char *output, int size);
++#endif
+ 
+ static int verifyBcrypt(const char *hash, const char *passwd)
+ {
++#ifdef USE_SYSTEM_LIBS
++    /* libxcrypt provides bcrypt via crypt_r(); no bundled libbcrypt. */
++    struct crypt_data data;
++    memset(&data, 0, sizeof(data));
++    char *aux = crypt_r(passwd, hash, &data);
++    if (aux == NULL)
++        return -1;
++    return timing_safe_strcmp(hash, aux);
++#else
+     char outhash[BCRYPT_HASHSIZE];
+ 
+     char *aux;
+@@ -453,6 +468,7 @@
+         return -1;
+ 
+     return timing_safe_strcmp(hash, outhash);
++#endif
+ }
+ 
+ 
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/main/lshttpdmain.cpp openlitespeed-1.9.2/src/main/lshttpdmain.cpp
+--- a/src/main/lshttpdmain.cpp	2026-08-06 17:51:35.000000000 +0200
++++ b/src/main/lshttpdmain.cpp	2026-08-07 13:16:37.506347786 +0200
+@@ -594,6 +594,14 @@
      char achBuf[MAX_PATH_LEN] = {0};
  
  #ifndef IS_LSCPD
@@ -940,7 +1001,7 @@ index 9da5271..abe5f1e 100644
      if (GPath::getAbsoluteFile(achBuf, MAX_PATH_LEN, pRoot,
                                 DEFAULT_CONFIG_FILE) == 0)
      {
-@@ -602,6 +610,7 @@ int LshttpdMain::testServerRoot(const char *pRoot)
+@@ -602,6 +610,7 @@
          else
              return LS_FAIL;
      }
@@ -948,7 +1009,7 @@ index 9da5271..abe5f1e 100644
  #else
      lstrncpy(achBuf, pRoot, sizeof(achBuf));
  #endif
-@@ -666,7 +675,8 @@ int LshttpdMain::guessCommonServerRoot()
+@@ -668,7 +677,8 @@
      const char *pServerDirs[] =
      {
          "lsws/",
@@ -958,7 +1019,7 @@ index 9da5271..abe5f1e 100644
      };
      char *pHome = getenv("HOME");
      pServerRoots[0] = pHome;
-@@ -707,6 +717,14 @@ int LshttpdMain::getServerRoot(int argc, char *argv[])
+@@ -709,6 +719,14 @@
          if (testServerRoot(achServerRoot) == 0)
              return 0;
      }
@@ -973,3 +1034,47 @@ index 9da5271..abe5f1e 100644
      if (guessCommonServerRoot() == 0)
          return 0;
      return LS_FAIL;
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/modules/CMakeLists.txt openlitespeed-1.9.2/src/modules/CMakeLists.txt
+--- a/src/modules/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
++++ b/src/modules/CMakeLists.txt	2026-08-07 13:30:24.381729655 +0200
+@@ -37,4 +37,9 @@
+     message("Make mod_security")
+     add_subdirectory(modsecurity-ls)
+ endif()
+-add_subdirectory(modacme)
++# mod_acme.so resolves g_api from the host binary. Distro LDFLAGS include
++# -Wl,--no-undefined, so the shared module cannot be linked. Built-in ACME
++# (src/http/useacme.cpp) remains available.
++if (NOT USE_SYSTEM_LIBS)
++    add_subdirectory(modacme)
++endif()
+diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' openlitespeed-1.9.2.orig/src/modules/modacme/CMakeLists.txt openlitespeed-1.9.2/src/modules/modacme/CMakeLists.txt
+--- a/src/modules/modacme/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
++++ b/src/modules/modacme/CMakeLists.txt	2026-08-07 13:30:00.492272612 +0200
+@@ -5,9 +5,22 @@
+ 
+ add_library(mod_acme SHARED  mod_acme.c)
+ 
+-target_link_libraries(mod_acme 
+-    -nodefaultlibs libstdc++.a
+-    pthread rt
+-    ${LIBSAN} crypt m gcc_eh c c_nonshared gcc)
++if (USE_SYSTEM_LIBS)
++    target_link_libraries(mod_acme pthread rt ${LIBSAN} crypt m)
++else()
++    target_link_libraries(mod_acme
++        -nodefaultlibs libstdc++.a
++        pthread rt
++        ${LIBSAN} crypt m gcc_eh c c_nonshared gcc)
++endif()
+ 
+ set_target_properties(mod_acme PROPERTIES PREFIX "")
++# g_api comes from the host openlitespeed binary; distro LDFLAGS include
++# -Wl,--no-undefined which would otherwise reject the module.
++if (USE_SYSTEM_LIBS)
++    target_link_options(mod_acme PRIVATE -Wl,--allow-shlib-undefined)
++endif()
++
++if (FHS_LAYOUT)
++    install(TARGETS mod_acme DESTINATION ${OLS_LIB_DIR}/modules)
++endif()
