@@ -7,7 +7,7 @@
 
 Name:           openlitespeed
 Version:        1.9.2
-Release:        3
+Release:        4
 Summary:        High-performance, lightweight HTTP server
 License:        GPLv3+
 Group:          System/Servers
@@ -193,9 +193,6 @@ install -D -m 0644 %{S:5} %{buildroot}%{_sysusersdir}/%{name}.conf
 ln -sf openlitespeed %{buildroot}%{_sbindir}/lshttpd
 
 # ---------------------------------------------------------------------------
-%pre
-%sysusers_create_package %{name} %{S:5}
-
 %post
 %systemd_post %{name}.service
 
