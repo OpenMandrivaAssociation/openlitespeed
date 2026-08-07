@@ -769,7 +769,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
 +%doc PACKAGING.md
 diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-0.20250807.0' '--exclude=.git' '--exclude=deps' openlitespeed-1.9.2.orig/src/CMakeLists.txt openlitespeed-1.9.2/src/CMakeLists.txt
 --- a/src/CMakeLists.txt	2026-08-06 17:51:35.000000000 +0200
-+++ b/src/CMakeLists.txt	2026-08-07 13:16:27.547854289 +0200
++++ b/src/CMakeLists.txt	2026-08-07 21:49:52.918672574 +0200
 @@ -1,6 +1,8 @@
  cmake_minimum_required(VERSION 3.0)
  
@@ -780,8 +780,15 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  
  
  add_subdirectory(adns)
-@@ -138,35 +140,75 @@
-   set(LIBATOMIC atomic)
+@@ -135,38 +137,81 @@
+ # )
+ 
+ if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+-  set(LIBATOMIC atomic)
++  find_library(ATOMIC_LIB atomic)
++  if (ATOMIC_LIB)
++    set(LIBATOMIC atomic)
++  endif()
  endif()
  
 -if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "FreeBSD")
@@ -876,7 +883,7 @@ diff -Naur '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exc
  
  # target_link_libraries(ctbench ${litespeedlib} )
  
-@@ -176,4 +218,10 @@
+@@ -176,4 +221,10 @@
  
  
  

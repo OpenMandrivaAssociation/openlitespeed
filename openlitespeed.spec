@@ -7,7 +7,7 @@
 
 Name:           openlitespeed
 Version:        1.9.2
-Release:        2
+Release:        3
 Summary:        High-performance, lightweight HTTP server
 License:        GPLv3+
 Group:          System/Servers
@@ -19,6 +19,7 @@ Source2:	https://github.com/litespeedtech/ls-hpack/archive/cf0f70dd10b352194c974
 Source3:	https://github.com/litespeedtech/ls-qpack/archive/91567706c41c0d97ab8dc576873ecd472d7869fa.tar.gz
 # lsquic CI pin; stock OpenSSL has no SSL_QUIC_METHOD / EVP_AEAD
 Source4:	https://github.com/google/boringssl/archive/refs/tags/0.20250807.0.tar.gz#/boringssl-0.20250807.0.tar.gz
+Source5:	openlitespeed.sysusers
 
 # ---------------------------------------------------------------------------
 # System libraries for everything that has a distro equivalent in cooker/main.
@@ -53,7 +54,6 @@ BuildOption:	-DMOD_PAGESPEED=OFF
 BuildOption:	-DMOD_SECURITY=OFF
 BuildOption:	-DMOD_LUA=OFF
 
-Requires(pre):  shadow
 # openssl(1) is invoked by admin/ACME helper scripts
 Requires:       openssl
 
@@ -187,17 +187,14 @@ d %{_localstatedir}/run/%{name}     0755 openlitespeed openlitespeed -
 d %{_localstatedir}/run/%{name}/tmp 0755 openlitespeed openlitespeed -
 EOF
 
+install -D -m 0644 %{S:5} %{buildroot}%{_sysusersdir}/%{name}.conf
+
 # Symlink litespeed -> openlitespeed for compat
 ln -sf openlitespeed %{buildroot}%{_sbindir}/lshttpd
 
 # ---------------------------------------------------------------------------
 %pre
-getent group openlitespeed >/dev/null || \
-    groupadd -r openlitespeed
-getent passwd openlitespeed >/dev/null || \
-    useradd -r -g openlitespeed -d /srv/%{name} \
-        -s /sbin/nologin -c "OpenLiteSpeed HTTP Server" openlitespeed
-exit 0
+%sysusers_create_package %{name} %{S:5}
 
 %post
 %systemd_post %{name}.service
@@ -250,6 +247,7 @@ exit 0
 # systemd
 %{_unitdir}/%{name}.service
 %{_tmpfilesdir}/%{name}.conf
+%{_sysusersdir}/%{name}.conf
 
 # License & docs
 %license GPL.txt
