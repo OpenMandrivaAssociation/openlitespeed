@@ -6,15 +6,15 @@
 %bcond_without system_libs
 
 Name:           openlitespeed
-Version:        1.9.2
-Release:        5
+Version:        1.9.3
+Release:        1
 Summary:        High-performance, lightweight HTTP server
 License:        GPLv3+
 Group:          System/Servers
 URL:            https://openlitespeed.org
 Source0:        https://github.com/litespeedtech/openlitespeed/archive/refs/tags/v%{version}.tar.gz
 # See LSQUICCOMMIT / lsquic .gitmodules
-Source1:	https://github.com/litespeedtech/lsquic/archive/19547405c24f60c4537478d38f4214e990be1f95.tar.gz
+Source1:	https://github.com/litespeedtech/lsquic/archive/d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1.tar.gz
 Source2:	https://github.com/litespeedtech/ls-hpack/archive/cf0f70dd10b352194c97448eb5d00b4aa484f531.tar.gz
 Source3:	https://github.com/litespeedtech/ls-qpack/archive/91567706c41c0d97ab8dc576873ecd472d7869fa.tar.gz
 # lsquic CI pin; stock OpenSSL has no SSL_QUIC_METHOD / EVP_AEAD
