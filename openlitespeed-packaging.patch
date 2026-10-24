@@ -4,7 +4,7 @@ diff -ruN '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--excl
 @@ -2,9 +2,107 @@
  set( CMAKE_EXPORT_COMPILE_COMMANDS ON)
  
- Project(openlitespeed VERSION 1.9.3)
+ Project(openlitespeed VERSION 1.9.4)
 -INCLUDE( ${PROJECT_SOURCE_DIR}/CMakeModules/common.cmake)
  INCLUDE(GNUInstallDirs)
  
@@ -879,14 +879,14 @@ diff -ruN '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--excl
 diff -ruN '--exclude=lsquic' '--exclude=ssl' '--exclude=boringssl-build' '--exclude=boringssl-*' '--exclude=.git' '--exclude=deps' a/src/http/useacme.cpp b/src/http/useacme.cpp
 --- a/src/http/useacme.cpp	2026-09-30 18:10:31.000000000 +0200
 +++ b/src/http/useacme.cpp	2026-10-01 04:11:11.149960728 +0200
-@@ -34,6 +34,7 @@
- #include <fcntl.h>
- #include <ifaddrs.h>
+@@ -37,6 +37,7 @@
+ #include <openssl/rand.h>
+ #include <poll.h>
  #include <pwd.h>
 +#include <stdlib.h>
+ #include <sys/socket.h>
+ #include <sys/stat.h>
  #include <sys/types.h>
- #include <sys/wait.h>
- #include <unistd.h>
 @@ -486,9 +487,9 @@
          snprintf(serverEnv, sizeof(serverEnv), "ACME_DIRECTORY=%s", UseAcme::getServer());
          char *p = env ? strdup(env) : NULL;
